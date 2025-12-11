@@ -1,0 +1,13 @@
+{
+    "name": "CustomQA",
+    "version": "1.0",
+    "manifest_version": 3,
+    "description": "A sample browser extension manifest file.",
+    "permissions": [
+        "storage",
+        "tabs"
+    ],
+    "host_permissions": [
+        "https://*.youtube.com/*"
+    ]
+}
