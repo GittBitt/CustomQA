@@ -9,6 +9,8 @@
                 #custom-qa-sidebar {
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                     color: #000;
+                    max-width: 400px;
+                    margin: 0 auto;
                 }
                 
                 .sidebar-header {
@@ -112,6 +114,8 @@
                     white-space: nowrap;
                     transition: all 0.2s;
                     flex-shrink: 0;
+                    background: #e0e0e0;
+                    color: #000;
                 }
                 
                 .pill-button.active {
@@ -119,13 +123,8 @@
                     color: #fff;
                 }
                 
-                .pill-button:not(.active) {
-                    background: #e0e0e0;
-                    color: #333;
-                }
-                
-                .pill-button:hover:not(.active) {
-                    background: #d0d0d0;
+                .pill-button:hover {
+                    opacity: 0.8;
                 }
                 
                 .slider-container {
@@ -214,7 +213,7 @@
                     <div class="subsection-title">Voice</div>
                     <div class="button-group">
                         <button class="pill-button">HUMAN</button>
-                        <button class="pill-button active">SYNTHESIZER</button>
+                        <button class="pill-button">SYNTHESIZER</button>
                     </div>
                 </div>
                 
@@ -222,7 +221,7 @@
                     <div class="subsection-title">Gender</div>
                     <div class="button-group">
                         <button class="pill-button">FEMALE</button>
-                        <button class="pill-button active">MALE</button>
+                        <button class="pill-button">MALE</button>
                         <button class="pill-button">ANDROGYNOUS</button>
                     </div>
                 </div>
@@ -246,7 +245,7 @@
                 <div style="margin-bottom: 16px;">
                     <div class="subsection-title">Audio Description:</div>
                     <div class="button-group">
-                        <button class="pill-button active">ON</button>
+                        <button class="pill-button">ON</button>
                         <button class="pill-button">OFF</button>
                     </div>
                 </div>
@@ -255,7 +254,7 @@
                     <div class="subsection-title">Pause During AD:</div>
                     <div class="button-group">
                         <button class="pill-button">ON</button>
-                        <button class="pill-button active">OFF</button>
+                        <button class="pill-button">OFF</button>
                     </div>
                 </div>
             </div>
@@ -269,7 +268,7 @@
                     <div class="subsection-title">Length:</div>
                     <div class="button-group">
                         <button class="pill-button">SUCCINCT</button>
-                        <button class="pill-button active">VERBOSE</button>
+                        <button class="pill-button">VERBOSE</button>
                         <button class="pill-button">VERY VERBOSE</button>
                     </div>
                 </div>
@@ -278,7 +277,7 @@
                     <div class="subsection-title">Frequency:</div>
                     <div class="button-group">
                         <button class="pill-button">RARELY</button>
-                        <button class="pill-button active">SOMETIMES</button>
+                        <button class="pill-button">SOMETIMES</button>
                         <button class="pill-button">OFTEN</button>
                         <button class="pill-button">VERY</button>
                     </div>
@@ -288,7 +287,7 @@
                     <div class="subsection-title">Emphasis (multiple choice):</div>
                     <div class="button-group">
                         <button class="pill-button">ACTIVITY</button>
-                        <button class="pill-button active">PERSON</button>
+                        <button class="pill-button">PERSON</button>
                         <button class="pill-button">OBJECT</button>
                         <button class="pill-button">SETTING</button>
                     </div>
@@ -323,6 +322,34 @@
                 sidebar.style.padding = "16px";
                 sidebar.style.marginBottom = "16px";
                 sidebar.innerHTML = createSidebarContent();
+
+                // Add event listeners for button clicks
+                sidebar.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('pill-button')) {
+                        const buttonGroup = e.target.parentElement;
+                        const buttons = buttonGroup.querySelectorAll('.pill-button');
+                        
+                        // For multiple choice groups, toggle; for single choice, clear others
+                        const isMultipleChoice = buttonGroup.parentElement.querySelector('.subsection-title')?.textContent.includes('multiple choice');
+                        
+                        if (!isMultipleChoice) {
+                            buttons.forEach(btn => btn.classList.remove('active'));
+                        }
+                        
+                        e.target.classList.toggle('active');
+                    }
+                });
+
+                // Prevent arrow keys from controlling video when sidebar is focused
+                sidebar.addEventListener('keydown', (e) => {
+                    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                        e.stopPropagation();
+                        e.preventDefault();
+                    }
+                });
+
+                // Make sidebar focusable
+                sidebar.setAttribute('tabindex', '0');
 
                 secondary.prepend(sidebar);
                 
