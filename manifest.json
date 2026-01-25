@@ -1,11 +1,12 @@
 {
     "name": "CustomQA",
-    "version": "1.0",
+    "version": "0.1.0",
     "manifest_version": 3,
     "description": "A sample browser extension manifest file.",
     "permissions": [
         "storage",
-        "tabs"
+        "tabs",
+        "scripting"
     ],
     "host_permissions": [
         "https://*.youtube.com/*"
@@ -25,7 +26,9 @@
                 "assets/bookmark.png", 
                 "assets/play.png", 
                 "assets/delete.png",
-                "assets/save.png"
+                "assets/save.png",
+                "popup.css",
+                "popup.js"
             ],
             "matches": ["https://*.youtube.com/*"]
         }
@@ -34,9 +37,9 @@
         "default_popup": "popup.html",
         "default_title": "CustomQA Extension",
         "default_icon": {
-            "16": "assets/icon16.png",
-            "24": "assets/icon48.png",
-            "32": "assets/icon128.png"
+            "16": "assets/ext-icon.png",
+            "24": "assets/ext-icon.png",
+            "32": "assets/ext-icon.png"
         }
     }
 }
