@@ -2,113 +2,207 @@
     <div class="sidebar-title-group">
         <span class="sidebar-star">✦</span>
         <div class="sidebar-title">
-            <span class="sidebar-title-main">Title</span>
+            <span class="sidebar-title-main">CustomQA</span>
             <span class="sidebar-title-sub">Sidebar Plugin</span>
         </div>
     </div>
     <div class="sidebar-header-actions">
-        <div class="vqa-badge">
-            VQA <span>❓</span>
-        </div>
-        <div class="settings-icon">⚙️</div>
+            <div class="button-group">
+                <button class="vqa-badge">VQA <span>❓</span></button>
+                <button class="settings-icon">⚙️</button>
+            </div>
     </div>
 </div>
 
-<div class="section">
-    <div class="section-title">Presentation Customization</div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Voice</div>
-        <div class="button-group">
-            <button class="pill-button">HUMAN</button>
-            <button class="pill-button active">SYNTHESIZER</button>
-        </div>
-    </div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Gender</div>
-        <div class="button-group">
-            <button class="pill-button">FEMALE</button>
-            <button class="pill-button active">MALE</button>
-            <button class="pill-button">ANDROGYNOUS</button>
-        </div>
-    </div>
-    
-    <div class="slider-container">
-        <div class="slider-label">Speed:</div>
-        <input type="range" min="0" max="100" value="50" class="slider">
-    </div>
-    
-    <div class="slider-container">
-        <div class="slider-label">Volume:</div>
-        <input type="range" min="0" max="100" value="50" class="slider">
-    </div>
+<div class="tab-container">
+    <button class="tab-button active" data-tab="audio-descriptions">Audio Descriptions</button>
+    <button class="tab-button" data-tab="vqa">Visual Question Answer</button>
 </div>
 
-<div class="divider"></div>
+<div class="tab-content" id="audio-descriptions-tab">
+    <div class="section">
+        <div class="section-title">PRESENTATION CUSTOMIZATION</div>
+        
+        <div class="slider-container">
+            <div class="slider-label">Speed:</div>
+            <input type="range" min="0" max="100" value="50" class="slider" id="ad-speed-slider">
+        </div>
+        
+        <div class="slider-container">
+            <div class="slider-label">Volume:</div>
+            <input type="range" min="0" max="100" value="50" class="slider" id="ad-volume-slider">
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Voice</div>
+            <div class="button-group">
+                <button class="pill-button" data-voice="human">HUMAN</button>
+                <button class="pill-button" data-voice="synthesizer">SYNTHESIZER</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Gender</div>
+            <div class="button-group">
+                <button class="pill-button" data-gender="female">FEMALE</button>
+                <button class="pill-button" data-gender="male">MALE</button>
+                <button class="pill-button" data-gender="androgynous">ANDROGYNOUS</button>
+            </div>
+        </div>
+    </div>
 
-<div class="section">
-    <div class="section-title">CUSTOMIZATION SETUPS</div>
+    <div class="divider"></div>
     
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Audio Description:</div>
-        <div class="button-group">
-            <button class="pill-button active">ON</button>
-            <button class="pill-button">OFF</button>
+    <div class="section">
+        <div class="section-title">CONTENT CUSTOMIZATION</div>
+        
+        <div class="slider-container">
+            <div class="slider-label">Length: <span id="length-value">50</span> words</div>
+            <input type="range" min="0" max="100" value="50" class="slider" id="length-slider">
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Frequency:</div>
+            <div class="button-group">
+                <button class="pill-button">RARELY</button>
+                <button class="pill-button">SOMETIMES</button>
+                <button class="pill-button">OFTEN</button>
+                <button class="pill-button">VERY</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Emphasis (multiple choice):</div>
+            <div class="button-group">
+                <button class="pill-button">ACTIVITY</button>
+                <button class="pill-button">PERSON</button>
+                <button class="pill-button">OBJECT</button>
+                <button class="pill-button">SETTING</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Narration Style (multiple choice):</div>
+            <div class="button-group">
+                <button class="pill-button">STYLE 1</button>
+                <button class="pill-button">STYLE 2</button>
+                <button class="pill-button">STYLE 3</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="divider"></div>
+    
+    <div class="section">
+        <div class="section-title">CUSTOMIZATION SETUPS</div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Audio Description:</div>
+            <div class="button-group">
+                <button class="pill-button">ON</button>
+                <button class="pill-button">OFF</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Pause During AD:</div>
+            <div class="button-group">
+                <button class="pill-button">ON</button>
+                <button class="pill-button">OFF</button>
+            </div>
         </div>
     </div>
     
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Pause During AD:</div>
-        <div class="button-group">
-            <button class="pill-button">ON</button>
-            <button class="pill-button active">OFF</button>
-        </div>
-    </div>
+    <button class="save-button">SAVE CHANGES</button>
 </div>
 
-<div class="divider"></div>
+<div class="tab-content" id="vqa-tab" style="display: none;">
+    <div class="section">
+        <div class="section-title">PRESENTATION CUSTOMIZATION</div>
+        
+        <div class="slider-container">
+            <div class="slider-label">Speed:</div>
+            <input type="range" min="0" max="100" value="50" class="slider" id="vqa-speed-slider">
+        </div>
+        
+        <div class="slider-container">
+            <div class="slider-label">Volume:</div>
+            <input type="range" min="0" max="100" value="50" class="slider" id="vqa-volume-slider">
+        </div>
 
-<div class="section">
-    <div class="section-title">CONTENT CUSTOMIZATION</div>
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Voice</div>
+            <div class="button-group" id="vqa-voice-group">
+                <button class="pill-button" data-voice="human">HUMAN</button>
+                <button class="pill-button" data-voice="synthesizer">SYNTHESIZER</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Gender</div>
+            <div class="button-group" id="vqa-gender-group">
+                <button class="pill-button" data-gender="female">FEMALE</button>
+                <button class="pill-button" data-gender="male">MALE</button>
+                <button class="pill-button" data-gender="androgynous">ANDROGYNOUS</button>
+            </div>
+        </div>
+        
+    </div>
     
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Length:</div>
-        <div class="button-group">
-            <button class="pill-button">SUCCINCT</button>
-            <button class="pill-button active">VERBOSE</button>
-            <button class="pill-button">VERY VERBOSE</button>
+    <div class="divider"></div>
+
+    <div class="section">
+        <div class="section-title">QUESTION</div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+            <textarea id="question-input" placeholder="Type your question here or press Q..." style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; color: #888; resize: vertical; min-height: 38px;"></textarea>
+            <button id="mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
+        </div>
+        <div class="section-title">GENERATED ANSWER</div>
+        <div id="answer-box" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; min-height: 50px; background-color: #f9f9f9; color: #333;">
+            <!-- Generated answer will appear here -->
+        </div>
+        
+    </div>
+
+    <div class="divider"></div>
+    
+    <div class="section">
+        <div class="section-title">CONTENT CUSTOMIZATION</div>
+        
+        <div class="slider-container">
+            <div class="slider-label">Length: <span id="length-value">50</span> words</div>
+            <input type="range" min="0" max="100" value="50" class="slider" id="length-slider">
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Frequency:</div>
+            <div class="button-group">
+                <button class="pill-button">RARELY</button>
+                <button class="pill-button">SOMETIMES</button>
+                <button class="pill-button">OFTEN</button>
+                <button class="pill-button">VERY</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Emphasis (multiple choice):</div>
+            <div class="button-group">
+                <button class="pill-button">ACTIVITY</button>
+                <button class="pill-button">PERSON</button>
+                <button class="pill-button">OBJECT</button>
+                <button class="pill-button">SETTING</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Narration Style (multiple choice):</div>
+            <div class="button-group">
+                <button class="pill-button">STYLE 1</button>
+                <button class="pill-button">STYLE 2</button>
+                <button class="pill-button">STYLE 3</button>
+            </div>
         </div>
     </div>
     
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Frequency:</div>
-        <div class="button-group">
-            <button class="pill-button">RARELY</button>
-            <button class="pill-button active">SOMETIMES</button>
-            <button class="pill-button">OFTEN</button>
-            <button class="pill-button">VERY</button>
-        </div>
-    </div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Emphasis (multiple choice):</div>
-        <div class="button-group">
-            <button class="pill-button">ACTIVITY</button>
-            <button class="pill-button active">PERSON</button>
-            <button class="pill-button">OBJECT</button>
-            <button class="pill-button">SETTING</button>
-        </div>
-    </div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Narration Style (multiple choice):</div>
-        <div class="button-group">
-            <button class="pill-button">STYLE 1</button>
-            <button class="pill-button">STYLE 2</button>
-            <button class="pill-button">STYLE 3</button>
-        </div>
-    </div>
+    <button class="save-button">SAVE CHANGES</button>
 </div>
-
-<button class="save-button">SAVE CHANGES</button>

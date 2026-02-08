@@ -23,23 +23,17 @@
     "web_accessible_resources": [
         {
             "resources": [
-                "assets/bookmark.png", 
-                "assets/play.png", 
-                "assets/delete.png",
-                "assets/save.png",
                 "popup.css",
-                "popup.js"
+                "popup.js",
+                "sidebar.html",
+                "sidebar.css"
             ],
             "matches": ["https://*.youtube.com/*"]
         }
     ],
+    
     "action": {
         "default_popup": "popup.html",
-        "default_title": "CustomQA Extension",
-        "default_icon": {
-            "16": "assets/ext-icon.png",
-            "24": "assets/ext-icon.png",
-            "32": "assets/ext-icon.png"
-        }
+        "default_title": "CustomQA Extension"
     }
 }
