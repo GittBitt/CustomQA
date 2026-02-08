@@ -57,13 +57,20 @@
                 .vqa-badge {
                     background: #000;
                     color: #fff;
-                    padding: 6px 12px;
+                    padding: 6px 16px; /* Slightly slimmer */
                     border-radius: 20px;
-                    font-size: 12px;
-                    font-weight: 600;
+                    font-size: 13px;
+                    font-weight: 500;
                     display: flex;
                     align-items: center;
                     gap: 6px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    border: none; /* No surrounding border */
+                }
+                
+                .vqa-badge:hover {
+                    opacity: 0.8; /* Lighten on hover */
                 }
                 
                 .settings-icon {
@@ -75,6 +82,14 @@
                     cursor: pointer;
                     color: #606060;
                     font-size: 20px;
+                    border: none;
+                    border-radius: 50%; /* Circle shape */
+                    background-color: transparent; /* No background color */
+                    transition: all 0.2s; /* For hover effect */
+                }
+
+                .settings-icon:hover {
+                    color: #333; /* Darker gray on hover */
                 }
                 
                 .tab-container {
@@ -239,7 +254,10 @@
                     </div>
                 </div>
                 <div class="sidebar-header-actions">
-                    <div class="settings-icon">⚙️</div>
+                        <div class="button-group">
+                            <button class="vqa-badge">VQA <span>❓</span></button>
+                            <button class="settings-icon">⚙️</button>
+                        </div>
                 </div>
             </div>
             
@@ -279,29 +297,7 @@
                         </div>
                     </div>
                 </div>
-                
-                <div class="divider"></div>
-                
-                <div class="section">
-                    <div class="section-title">CUSTOMIZATION SETUPS</div>
-                    
-                    <div style="margin-bottom: 16px;">
-                        <div class="subsection-title">Audio Description:</div>
-                        <div class="button-group">
-                            <button class="pill-button">ON</button>
-                            <button class="pill-button">OFF</button>
-                        </div>
-                    </div>
-                    
-                    <div style="margin-bottom: 16px;">
-                        <div class="subsection-title">Pause During AD:</div>
-                        <div class="button-group">
-                            <button class="pill-button">ON</button>
-                            <button class="pill-button">OFF</button>
-                        </div>
-                    </div>
-                </div>
-                
+
                 <div class="divider"></div>
                 
                 <div class="section">
@@ -338,6 +334,28 @@
                             <button class="pill-button">STYLE 1</button>
                             <button class="pill-button">STYLE 2</button>
                             <button class="pill-button">STYLE 3</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+                
+                <div class="section">
+                    <div class="section-title">CUSTOMIZATION SETUPS</div>
+                    
+                    <div style="margin-bottom: 16px;">
+                        <div class="subsection-title">Audio Description:</div>
+                        <div class="button-group">
+                            <button class="pill-button">ON</button>
+                            <button class="pill-button">OFF</button>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 16px;">
+                        <div class="subsection-title">Pause During AD:</div>
+                        <div class="button-group">
+                            <button class="pill-button">ON</button>
+                            <button class="pill-button">OFF</button>
                         </div>
                     </div>
                 </div>
@@ -379,6 +397,59 @@
                 </div>
                 
                 <div class="divider"></div>
+
+                <div class="section">
+                    <div class="section-title">QUESTION</div>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                        <textarea id="question-input" placeholder="Type your question here or press Q..." style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; color: #888; resize: vertical; min-height: 38px;"></textarea>
+                        <button id="mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
+                    </div>
+                    <div class="section-title">GENERATED ANSWER</div>
+                    <div id="answer-box" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; min-height: 50px; background-color: #f9f9f9; color: #333;">
+                        <!-- Generated answer will appear here -->
+                    </div>
+                    
+                </div>
+
+                <div class="divider"></div>
+                
+                <div class="section">
+                    <div class="section-title">CONTENT CUSTOMIZATION</div>
+                    
+                    <div class="slider-container">
+                        <div class="slider-label">Length: <span id="length-value">50</span> words</div>
+                        <input type="range" min="0" max="100" value="50" class="slider" id="length-slider">
+                    </div>
+                    
+                    <div style="margin-bottom: 16px;">
+                        <div class="subsection-title">Frequency:</div>
+                        <div class="button-group">
+                            <button class="pill-button">RARELY</button>
+                            <button class="pill-button">SOMETIMES</button>
+                            <button class="pill-button">OFTEN</button>
+                            <button class="pill-button">VERY</button>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 16px;">
+                        <div class="subsection-title">Emphasis (multiple choice):</div>
+                        <div class="button-group">
+                            <button class="pill-button">ACTIVITY</button>
+                            <button class="pill-button">PERSON</button>
+                            <button class="pill-button">OBJECT</button>
+                            <button class="pill-button">SETTING</button>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 16px;">
+                        <div class="subsection-title">Narration Style (multiple choice):</div>
+                        <div class="button-group">
+                            <button class="pill-button">STYLE 1</button>
+                            <button class="pill-button">STYLE 2</button>
+                            <button class="pill-button">STYLE 3</button>
+                        </div>
+                    </div>
+                </div>
                 
                 <button class="save-button">SAVE CHANGES</button>
             </div>
@@ -512,6 +583,13 @@
                             e.target.classList.toggle('active');
                         }
                     }
+                });
+
+                // Auto-resize textarea
+                const questionInput = sidebar.querySelector('#question-input');
+                questionInput.addEventListener('input', () => {
+                    questionInput.style.height = 'auto';
+                    questionInput.style.height = `${questionInput.scrollHeight}px`;
                 });
 
                 // Prevent arrow keys from controlling video when sidebar is focused
