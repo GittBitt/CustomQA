@@ -22,10 +22,21 @@
                 const htmlUrl = chrome.runtime.getURL('sidebar.html');
                 const cssUrl = chrome.runtime.getURL('sidebar.css');
 
-                const [html, css] = await Promise.all([
-                    fetch(htmlUrl).then(response => response.text()),
-                    fetch(cssUrl).then(response => response.text())
-                ]);
+                if (!htmlUrl || !cssUrl) {
+                    console.error('Could not find sidebar.html or sidebar.css');
+                    return;
+                }
+
+                console.log('htmlUrl:', htmlUrl);
+                console.log('cssUrl:', cssUrl);
+
+                const htmlResponse = await fetch(htmlUrl);
+                console.log('html response:', htmlResponse);
+                const html = await htmlResponse.text();
+
+                const cssResponse = await fetch(cssUrl);
+                console.log('css response:', cssResponse);
+                const css = await cssResponse.text();
 
                 const styleElement = document.createElement('style');
                 styleElement.textContent = css;
@@ -144,9 +155,60 @@
 
                 // Auto-resize textarea
                 const questionInput = sidebar.querySelector('#question-input');
+                const answerBox = sidebar.querySelector('#answer-box'); // Get answerBox here
+
                 questionInput.addEventListener('input', () => {
                     questionInput.style.height = 'auto';
                     questionInput.style.height = `${questionInput.scrollHeight}px`;
+                    answerBox.textContent = questionInput.value; // Mirror question to answer
+                });
+
+                // Speech-to-text
+                const micButton = sidebar.querySelector('#mic-button');
+                micButton.addEventListener('click', () => {
+                    const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+                    recognition.lang = 'en-US';
+                    recognition.interimResults = false;
+                    recognition.maxAlternatives = 1;
+
+                    const activationSound = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
+                    console.log('activationSound:', activationSound);
+                    try {
+                        activationSound.play();
+                    } catch (error) {
+                        console.error('Error playing activation sound:', error);
+                    }
+
+                    recognition.start();
+
+                    recognition.onresult = (event) => {
+                        questionInput.value = event.results[0][0].transcript;
+                    };
+
+                    recognition.onspeechend = () => {
+                        recognition.stop();
+                        try {
+                            activationSound.play();
+                        } catch (error) {
+                            console.error('Error playing activation sound:', error);
+                        }
+                    };
+
+                    recognition.onerror = (event) => {
+                        console.error('Speech recognition error:', event.error);
+                    };
+                });
+
+                // Text-to-speech
+                const speakerButton = sidebar.querySelector('#speaker-button');
+                speakerButton.addEventListener('click', () => {
+                    const answerBox = sidebar.querySelector('#answer-box');
+                    const textToSpeak = answerBox.textContent;
+
+                    if (textToSpeak) {
+                        const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                        speechSynthesis.speak(utterance);
+                    }
                 });
 
                 // Prevent arrow keys from controlling video when sidebar is focused

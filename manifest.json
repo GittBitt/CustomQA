@@ -6,7 +6,8 @@
     "permissions": [
         "storage",
         "tabs",
-        "scripting"
+        "scripting",
+        "tts"
     ],
     "host_permissions": [
         "https://*.youtube.com/*"
@@ -26,7 +27,8 @@
                 "popup.css",
                 "popup.js",
                 "sidebar.html",
-                "sidebar.css"
+                "sidebar.css",
+                "assets/activation.mp3"
             ],
             "matches": ["https://*.youtube.com/*"]
         }
