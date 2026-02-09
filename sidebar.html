@@ -151,20 +151,36 @@
     
     <div class="divider"></div>
 
-    <div class="section">
-        <div class="section-title">QUESTION</div>
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-            <textarea id="question-input" placeholder="Type your question here or press Q..." style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; color: #888; resize: vertical; min-height: 38px;"></textarea>
-            <button id="mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
-        </div>
-        <div class="section-title">GENERATED ANSWER</div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <div id="answer-box" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; min-height: 50px; background-color: #f9f9f9; color: #333;">
-                <!-- Generated answer will appear here -->
+    <div class="vqa-sub-tab-container">
+        <button class="vqa-sub-tab-button active" data-tab="qa">Question & Answer</button>
+        <button class="vqa-sub-tab-button" data-tab="chat">Chat</button>
+    </div>
+
+    <div class="vqa-sub-tab-content" id="qa-tab">
+        <div class="section">
+            <div class="section-title">QUESTION</div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                <textarea id="question-input" placeholder="Type your question here or press Q..." style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; color: #888; resize: vertical; min-height: 38px;"></textarea>
+                <button id="mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
             </div>
-            <button id="speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
+            <div class="section-title">GENERATED ANSWER</div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <div id="answer-box" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; min-height: 50px; background-color: #f9f9f9; color: #333;">
+                    <!-- Generated answer will appear here -->
+                </div>
+                <button id="speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
+            </div>
         </div>
-        
+    </div>
+
+    <div class="vqa-sub-tab-content" id="chat-tab" style="display: none;">
+        <div class="chatbox">
+            <div class="chat-messages"></div>
+            <div class="chat-input-container">
+                <textarea class="chat-input" placeholder="Type your message..."></textarea>
+                <button class="chat-send-button">Send</button>
+            </div>
+        </div>
     </div>
 
     <div class="divider"></div>

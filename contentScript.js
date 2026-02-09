@@ -64,6 +64,24 @@
                     });
                 });
 
+                // VQA sub-tab switching
+                const vqaSubTabButtons = sidebar.querySelectorAll('.vqa-sub-tab-button');
+                const vqaSubTabContents = sidebar.querySelectorAll('.vqa-sub-tab-content');
+
+                vqaSubTabButtons.forEach(button => {
+                    button.addEventListener('click', () => {
+                        const tabName = button.getAttribute('data-tab');
+
+                        vqaSubTabButtons.forEach(btn => btn.classList.remove('active'));
+                        button.classList.add('active');
+
+                        vqaSubTabContents.forEach(content => {
+                            content.style.display = 'none';
+                        });
+                        sidebar.querySelector(`#${tabName}-tab`).style.display = 'block';
+                    });
+                });
+
                 // Length slider update
                 const lengthSlider = sidebar.querySelector('#length-slider');
                 const lengthValue = sidebar.querySelector('#length-value');
