@@ -178,6 +178,8 @@
             <div class="chat-messages"></div>
             <div class="chat-input-container">
                 <textarea class="chat-input" placeholder="Type your message..."></textarea>
+                <button id="chat-mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
+                <button id="chat-speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
                 <button class="chat-send-button">Send</button>
             </div>
         </div>
@@ -186,42 +188,5 @@
     <div class="divider"></div>
     
     <div class="section">
-        <div class="section-title">CONTENT CUSTOMIZATION</div>
-        
-        <div class="slider-container">
-            <div class="slider-label">Length: <span id="length-value">50</span> words</div>
-            <input type="range" min="0" max="100" value="50" class="slider" id="length-slider">
-        </div>
-        
-        <div style="margin-bottom: 16px;">
-            <div class="subsection-title">Frequency:</div>
-            <div class="button-group">
-                <button class="pill-button">RARELY</button>
-                <button class="pill-button">SOMETIMES</button>
-                <button class="pill-button">OFTEN</button>
-                <button class="pill-button">VERY</button>
-            </div>
-        </div>
-        
-        <div style="margin-bottom: 16px;">
-            <div class="subsection-title">Emphasis (multiple choice):</div>
-            <div class="button-group">
-                <button class="pill-button">ACTIVITY</button>
-                <button class="pill-button">PERSON</button>
-                <button class="pill-button">OBJECT</button>
-                <button class="pill-button">SETTING</button>
-            </div>
-        </div>
-        
-        <div style="margin-bottom: 16px;">
-            <div class="subsection-title">Narration Style:</div>
-            <div class="button-group">
-                <button class="pill-button">STYLE 1</button>
-                <button class="pill-button">STYLE 2</button>
-                <button class="pill-button">STYLE 3</button>
-            </div>
-        </div>
-    </div>
-    
     <button class="save-button">SAVE CHANGES</button>
 </div>

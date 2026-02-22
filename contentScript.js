@@ -229,6 +229,54 @@
                     }
                 });
 
+                // Chat Speech-to-text
+                const chatMicButton = sidebar.querySelector('#chat-mic-button');
+                chatMicButton.addEventListener('click', () => {
+                    const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+                    recognition.lang = 'en-US';
+                    recognition.interimResults = false;
+                    recognition.maxAlternatives = 1;
+
+                    const activationSound = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
+                    try {
+                        activationSound.play();
+                    } catch (error) {
+                        console.error('Error playing activation sound:', error);
+                    }
+
+                    recognition.start();
+
+                    recognition.onresult = (event) => {
+                        const chatInput = sidebar.querySelector('.chat-input');
+                        chatInput.value = event.results[0][0].transcript;
+                    };
+
+                    recognition.onspeechend = () => {
+                        recognition.stop();
+                        try {
+                            activationSound.play();
+                        } catch (error) {
+                            console.error('Error playing activation sound:', error);
+                        }
+                    };
+
+                    recognition.onerror = (event) => {
+                        console.error('Speech recognition error:', event.error);
+                    };
+                });
+
+                // Chat Text-to-speech
+                const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
+                chatSpeakerButton.addEventListener('click', () => {
+                    const chatInput = sidebar.querySelector('.chat-input');
+                    const textToSpeak = chatInput.value;
+
+                    if (textToSpeak) {
+                        const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                        speechSynthesis.speak(utterance);
+                    }
+                });
+
                 // Prevent arrow keys from controlling video when sidebar is focused
                 sidebar.addEventListener('keydown', (e) => {
                     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
