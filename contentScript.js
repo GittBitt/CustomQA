@@ -182,39 +182,59 @@
                 });
 
                 // Speech-to-text
+                let isListeningMicButton = false;
+                let recognitionMicButton = null;
                 const micButton = sidebar.querySelector('#mic-button');
+                const activationSound = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
                 micButton.addEventListener('click', () => {
-                    const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-                    recognition.lang = 'en-US';
-                    recognition.interimResults = false;
-                    recognition.maxAlternatives = 1;
+                    if (isListeningMicButton) {
+                        recognitionMicButton.stop();
+                        isListeningMicButton = false;
+                        micButton.classList.remove('listening');
+                        try {
+                            activationSound.play(); // Play sound on stop as well
+                            console.log('activationSound:', activationSound);
+                        } catch (error) {
+                            console.error('Error playing activation sound:', error);
+                        }
+                    } else {
+                        recognitionMicButton = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+                        recognitionMicButton.lang = 'en-US';
+                        recognitionMicButton.interimResults = false;
+                        recognitionMicButton.maxAlternatives = 1;
 
-                    const activationSound = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
-                    console.log('activationSound:', activationSound);
-                    try {
-                        activationSound.play();
-                    } catch (error) {
-                        console.error('Error playing activation sound:', error);
-                    }
-
-                    recognition.start();
-
-                    recognition.onresult = (event) => {
-                        questionInput.value = event.results[0][0].transcript;
-                    };
-
-                    recognition.onspeechend = () => {
-                        recognition.stop();
+                        console.log('activationSound:', activationSound);
                         try {
                             activationSound.play();
                         } catch (error) {
                             console.error('Error playing activation sound:', error);
                         }
-                    };
 
-                    recognition.onerror = (event) => {
-                        console.error('Speech recognition error:', event.error);
-                    };
+                        recognitionMicButton.start();
+                        isListeningMicButton = true;
+                        micButton.classList.add('listening');
+
+                        recognitionMicButton.onresult = (event) => {
+                            questionInput.value = event.results[0][0].transcript;
+                        };
+
+                        recognitionMicButton.onspeechend = () => {
+                            recognitionMicButton.stop();
+                            isListeningMicButton = false;
+                            micButton.classList.remove('listening');
+                            try {
+                                activationSound.play();
+                            } catch (error) {
+                                console.error('Error playing activation sound:', error);
+                            }
+                        };
+
+                        recognitionMicButton.onerror = (event) => {
+                            console.error('Speech recognition error:', event.error);
+                            isListeningMicButton = false;
+                            micButton.classList.remove('listening');
+                        };
+                    }
                 });
 
                 // Text-to-speech
@@ -222,6 +242,73 @@
                 speakerButton.addEventListener('click', () => {
                     const answerBox = sidebar.querySelector('#answer-box');
                     const textToSpeak = answerBox.textContent;
+
+                    if (textToSpeak) {
+                        const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                        speechSynthesis.speak(utterance);
+                    }
+                });
+
+                // Chat Speech-to-text
+                let isListeningChatMicButton = false;
+                let recognitionChatMicButton = null;
+                const chatMicButton = sidebar.querySelector('#chat-mic-button');
+                chatMicButton.addEventListener('click', () => {
+                    if (isListeningChatMicButton) {
+                        recognitionChatMicButton.stop();
+                        isListeningChatMicButton = false;
+                        chatMicButton.classList.remove('listening');
+                        try {
+                            activationSound.play(); // Play sound on stop as well
+                        } catch (error) {
+                            console.error('Error playing activation sound:', error);
+                        }
+                    } else {
+                        recognitionChatMicButton = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+                        recognitionChatMicButton.lang = 'en-US';
+                        recognitionChatMicButton.interimResults = false;
+                        recognitionChatMicButton.maxAlternatives = 1;
+
+                        const activationSound = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
+                        try {
+                            activationSound.play();
+                        } catch (error) {
+                            console.error('Error playing activation sound:', error);
+                        }
+
+                        recognitionChatMicButton.start();
+                        isListeningChatMicButton = true;
+                        chatMicButton.classList.add('listening');
+
+                        recognitionChatMicButton.onresult = (event) => {
+                            const chatInput = sidebar.querySelector('.chat-input');
+                            chatInput.value = event.results[0][0].transcript;
+                        };
+
+                        recognitionChatMicButton.onspeechend = () => {
+                            recognitionChatMicButton.stop();
+                            isListeningChatMicButton = false;
+                            chatMicButton.classList.remove('listening');
+                            try {
+                                activationSound.play();
+                            } catch (error) {
+                                console.error('Error playing activation sound:', error);
+                            }
+                        };
+
+                        recognitionChatMicButton.onerror = (event) => {
+                            console.error('Speech recognition error:', event.error);
+                            isListeningChatMicButton = false;
+                            chatMicButton.classList.remove('listening');
+                        };
+                    }
+                });
+
+                // Chat Text-to-speech
+                const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
+                chatSpeakerButton.addEventListener('click', () => {
+                    const chatInput = sidebar.querySelector('.chat-input');
+                    const textToSpeak = chatInput.value;
 
                     if (textToSpeak) {
                         const utterance = new SpeechSynthesisUtterance(textToSpeak);
