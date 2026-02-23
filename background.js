@@ -30,7 +30,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Use async IIFE to handle async operation
     (async () => {
       try {
-        const result = await callGeminiAPI(request.prompt);
+        const result = await callGeminiAPI(request.prompt, request.frameData);
         console.log('[BG] Sending success response');
         sendResponse({ success: true, text: result });
       } catch (error) {
@@ -43,7 +43,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-async function callGeminiAPI(prompt) {
+async function callGeminiAPI(prompt, frameData) {
   try {
     console.log('[API] Fetching config.json');
     // Fetch API key from config
@@ -54,6 +54,26 @@ async function callGeminiAPI(prompt) {
     
     console.log('[API] API Key loaded, making request to Gemini');
     console.log('[API] Using model:', model);
+    console.log('[API] Frame data present:', !!frameData);
+    
+    // Build content parts
+    const parts = [];
+    
+    // Add image if provided
+    if (frameData) {
+      console.log('[API] Adding image to request');
+      parts.push({
+        inlineData: {
+          mimeType: "image/jpeg",
+          data: frameData
+        }
+      });
+    }
+    
+    // Add text prompt
+    parts.push({
+      text: prompt
+    });
     
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
       method: 'POST',
@@ -62,9 +82,7 @@ async function callGeminiAPI(prompt) {
       },
       body: JSON.stringify({
         contents: [{
-          parts: [{
-            text: prompt
-          }]
+          parts: parts
         }]
       })
     });
