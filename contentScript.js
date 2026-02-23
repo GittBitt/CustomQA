@@ -351,6 +351,9 @@
                         const question = chatInput.value.trim();
 
                         if (question) {
+                            // Pause the video
+                            video.pause();
+
                             // Display user message
                             const userMessage = document.createElement('div');
                             userMessage.className = 'chat-message user-message';
@@ -408,6 +411,15 @@
                                     const youtubeUrl = window.location.href;
                                     const currentTime = video.currentTime;
 
+                                    // Capture video frame
+                                    console.log('Capturing video frame...');
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = video.videoWidth;
+                                    canvas.height = video.videoHeight;
+                                    const ctx = canvas.getContext('2d');
+                                    ctx.drawImage(video, 0, 0);
+                                    const frameData = canvas.toDataURL('image/jpeg').split(',')[1]; // Remove data URL prefix
+
                                     // Format timestamp
                                     const formatTime = (seconds) => {
                                         const mins = Math.floor(seconds / 60);
@@ -416,21 +428,25 @@
                                     };
 
                                     const prompt = `User is watching a YouTube video at timestamp ${formatTime(currentTime)}.
-Video URL: ${youtubeUrl}
 User's question: "${question}"
 
-Note: I don't have access to the actual video content, so I can only provide general guidance based on the question and timestamp. Please answer their question based on what they're likely asking about, or ask for clarification if needed. Keep the response concise and helpful.`;
+Please analyze the video frame shown and answer their question about what's happening in the video at this moment.`;
 
-                                    console.log('Sending CALL_GEMINI message to background script');
-                                    // Send message to background script to avoid CORS issues
+                                    console.log('Sending CALL_GEMINI message with video frame to background script');
+                                    // Send message to background script with the video frame
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_GEMINI',
-                                        prompt: prompt
+                                        prompt: prompt,
+                                        frameData: frameData
                                     }, (response) => {
                                         console.log('Received response from background:', response);
                                         if (response && response.success) {
                                             aiMessage.textContent = response.text;
                                             speakerBtn.style.opacity = '1';
+                                            
+                                            // Auto-play voice response
+                                            const utterance = new SpeechSynthesisUtterance(response.text);
+                                            window.speechSynthesis.speak(utterance);
                                         } else {
                                             aiMessage.textContent = `Error: ${response?.error || 'Unknown error occurred'}`;
                                             console.error('Gemini API error:', response?.error);
