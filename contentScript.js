@@ -186,7 +186,6 @@
                     answerBox.textContent = questionInput.value; // Mirror question to answer
                 });
 
-                // Speech-to-text
                 let isListeningMicButton = false;
                 let recognitionMicButton = null;
                 const micButton = sidebar.querySelector('#mic-button');
@@ -239,6 +238,30 @@
                             isListeningMicButton = false;
                             micButton.classList.remove('listening');
                         };
+                    }
+                });
+
+                // Question Speaker Button (QA Tab)
+                let isQuestionSpeaking = false;
+                const questionSpeakerButton = sidebar.querySelector('#question-speaker-button');
+                questionSpeakerButton.addEventListener('click', () => {
+                    const textToSpeak = questionInput.value.trim();
+
+                    if (isQuestionSpeaking) {
+                        // Stop speaking
+                        window.speechSynthesis.cancel();
+                        isQuestionSpeaking = false;
+                        questionSpeakerButton.textContent = '🔊';
+                    } else if (textToSpeak) {
+                        // Start speaking
+                        const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                        utterance.onend = () => {
+                            isQuestionSpeaking = false;
+                            questionSpeakerButton.textContent = '🔊';
+                        };
+                        window.speechSynthesis.speak(utterance);
+                        isQuestionSpeaking = true;
+                        questionSpeakerButton.textContent = '⏸';
                     }
                 });
 
@@ -299,13 +322,28 @@
 
                 // Chat Text-to-speech
                 const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
+                let isChatInputSpeaking = false;
                 chatSpeakerButton.addEventListener('click', () => {
                     const chatInput = sidebar.querySelector('.chat-input');
                     const textToSpeak = chatInput.value;
 
-                    if (textToSpeak) {
+                    if (isChatInputSpeaking) {
+                        window.speechSynthesis.cancel();
+                        isChatInputSpeaking = false;
+                        chatSpeakerButton.textContent = '🔊';
+                    } else if (textToSpeak) {
                         const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                        speechSynthesis.speak(utterance);
+                        const speedSlider = sidebar.querySelector('#vqa-speed-slider');
+                        const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
+                        if (speedSlider) utterance.rate = speedSlider.value / 50;
+                        if (volumeSlider) utterance.volume = volumeSlider.value / 100;
+                        utterance.onend = () => {
+                            isChatInputSpeaking = false;
+                            chatSpeakerButton.textContent = '🔊';
+                        };
+                        window.speechSynthesis.speak(utterance);
+                        isChatInputSpeaking = true;
+                        chatSpeakerButton.textContent = '⏸';
                     }
                 });
 
@@ -347,11 +385,58 @@
                             // Pause the video
                             video.pause();
 
-                            // Display user message
+                            // Create user message container with speaker button
+                            const userMessageContainer = document.createElement('div');
+                            userMessageContainer.style.display = 'flex';
+                            userMessageContainer.style.alignItems = 'flex-start';
+                            userMessageContainer.style.gap = '8px';
+                            userMessageContainer.style.marginBottom = '12px';
+                            userMessageContainer.style.justifyContent = 'flex-end';
+
+                            const userSpeakerBtn = document.createElement('button');
+                            userSpeakerBtn.textContent = '🔊';
+                            userSpeakerBtn.style.background = 'none';
+                            userSpeakerBtn.style.border = 'none';
+                            userSpeakerBtn.style.fontSize = '18px';
+                            userSpeakerBtn.style.cursor = 'pointer';
+                            userSpeakerBtn.style.padding = '0';
+                            userSpeakerBtn.style.marginTop = '8px';
+                            userSpeakerBtn.style.opacity = '0.5';
+                            userSpeakerBtn.style.transition = 'opacity 0.2s';
+                            
+                            userSpeakerBtn.addEventListener('mouseover', () => userSpeakerBtn.style.opacity = '1');
+                            userSpeakerBtn.addEventListener('mouseout', () => userSpeakerBtn.style.opacity = '0.5');
+                            
+                            let isUserQuestionSpeaking = false;
+                            userSpeakerBtn.addEventListener('click', () => {
+                                if (isUserQuestionSpeaking) {
+                                    window.speechSynthesis.cancel();
+                                    isUserQuestionSpeaking = false;
+                                    userSpeakerBtn.textContent = '🔊';
+                                } else {
+                                    const utterance = new SpeechSynthesisUtterance(question);
+                                    const speedSlider = sidebar.querySelector('#vqa-speed-slider');
+                                    const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
+                                    if (speedSlider) utterance.rate = speedSlider.value / 50;
+                                    if (volumeSlider) utterance.volume = volumeSlider.value / 100;
+                                    utterance.onend = () => {
+                                        isUserQuestionSpeaking = false;
+                                        userSpeakerBtn.textContent = '🔊';
+                                    };
+                                    window.speechSynthesis.speak(utterance);
+                                    isUserQuestionSpeaking = true;
+                                    userSpeakerBtn.textContent = '⏸';
+                                }
+                            });
+
                             const userMessage = document.createElement('div');
                             userMessage.className = 'chat-message user-message';
                             userMessage.textContent = question;
-                            chatMessages.appendChild(userMessage);
+                            userMessage.style.flex = '1';
+
+                            userMessageContainer.appendChild(userSpeakerBtn);
+                            userMessageContainer.appendChild(userMessage);
+                            chatMessages.appendChild(userMessageContainer);
 
                             chatInput.value = '';
                             chatInput.style.height = 'auto'; // Reset height
@@ -382,11 +467,26 @@
                             speakerBtn.addEventListener('mouseover', () => speakerBtn.style.opacity = '1');
                             speakerBtn.addEventListener('mouseout', () => speakerBtn.style.opacity = '0.5');
                             
+                            let isAIMessageSpeaking = false;
                             speakerBtn.addEventListener('click', () => {
                                 const textToSpeak = aiMessage.textContent;
-                                if (textToSpeak && textToSpeak !== 'Thinking...') {
+                                if (isAIMessageSpeaking) {
+                                    window.speechSynthesis.cancel();
+                                    isAIMessageSpeaking = false;
+                                    speakerBtn.textContent = '🔊';
+                                } else if (textToSpeak && textToSpeak !== 'Thinking...') {
                                     const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                                    const speedSlider = sidebar.querySelector('#vqa-speed-slider');
+                                    const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
+                                    if (speedSlider) utterance.rate = speedSlider.value / 50;
+                                    if (volumeSlider) utterance.volume = volumeSlider.value / 100;
+                                    utterance.onend = () => {
+                                        isAIMessageSpeaking = false;
+                                        speakerBtn.textContent = '🔊';
+                                    };
                                     window.speechSynthesis.speak(utterance);
+                                    isAIMessageSpeaking = true;
+                                    speakerBtn.textContent = '⏸';
                                 }
                             });
 
@@ -437,8 +537,12 @@ Please analyze the video frame shown and answer their question about what's happ
                                             aiMessage.textContent = response.text;
                                             speakerBtn.style.opacity = '1';
                                             
-                                            // Auto-play voice response
+                                            // Auto-play voice response with VQA settings
                                             const utterance = new SpeechSynthesisUtterance(response.text);
+                                            const speedSlider = sidebar.querySelector('#vqa-speed-slider');
+                                            const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
+                                            if (speedSlider) utterance.rate = speedSlider.value / 50;
+                                            if (volumeSlider) utterance.volume = volumeSlider.value / 100;
                                             window.speechSynthesis.speak(utterance);
                                         } else {
                                             aiMessage.textContent = `Error: ${response?.error || 'Unknown error occurred'}`;
@@ -505,8 +609,12 @@ Please analyze the video frame shown and answer their question about what's happ
                                         if (response && response.success) {
                                             answerBox.textContent = response.text;
                                             
-                                            // Auto-play voice response
+                                            // Auto-play voice response with VQA settings
                                             const utterance = new SpeechSynthesisUtterance(response.text);
+                                            const speedSlider = sidebar.querySelector('#vqa-speed-slider');
+                                            const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
+                                            if (speedSlider) utterance.rate = speedSlider.value / 50;
+                                            if (volumeSlider) utterance.volume = volumeSlider.value / 100;
                                             window.speechSynthesis.speak(utterance);
 
                                             // Clear question input after receiving answer
@@ -526,14 +634,29 @@ Please analyze the video frame shown and answer their question about what's happ
                         }
                     });
 
-                    // QA Tab Speaker Button
+                    // QA Tab Speaker Button with toggle
                     const qaSpeakerButton = sidebar.querySelector('#speaker-button');
+                    let isQAAnswerSpeaking = false;
                     qaSpeakerButton.addEventListener('click', () => {
                         const textToSpeak = answerBox.textContent;
 
-                        if (textToSpeak && textToSpeak !== 'Thinking...') {
+                        if (isQAAnswerSpeaking) {
+                            window.speechSynthesis.cancel();
+                            isQAAnswerSpeaking = false;
+                            qaSpeakerButton.textContent = '🔊';
+                        } else if (textToSpeak && textToSpeak !== 'Thinking...') {
                             const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                            const speedSlider = sidebar.querySelector('#vqa-speed-slider');
+                            const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
+                            if (speedSlider) utterance.rate = speedSlider.value / 50;
+                            if (volumeSlider) utterance.volume = volumeSlider.value / 100;
+                            utterance.onend = () => {
+                                isQAAnswerSpeaking = false;
+                                qaSpeakerButton.textContent = '🔊';
+                            };
                             window.speechSynthesis.speak(utterance);
+                            isQAAnswerSpeaking = true;
+                            qaSpeakerButton.textContent = '⏸';
                         }
                     });
                 }

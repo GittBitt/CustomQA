@@ -137,6 +137,7 @@
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
                 <textarea id="question-input" placeholder="Type your question here or press Q..." style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; color: #888; resize: vertical; min-height: 38px;"></textarea>
                 <button id="mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
+                <button id="question-speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
             </div>
             <div class="section-title">GENERATED ANSWER</div>
             <div style="display: flex; align-items: center; gap: 8px;">
@@ -145,7 +146,7 @@
                 </div>
                 <button id="speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
             </div>
-            <button id="qa-send-button" class="save-button" style="margin-top: 8px; padding: 10px 20px;">Ask question at 0:00</button>
+            <button id="qa-send-button" class="save-button" style="margin-top: 16px; padding: 10px 20px;">Ask question at 0:00</button>
         </div>
     </div>
 
@@ -158,22 +159,22 @@
                 <button id="chat-speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
             </div>
         </div>
-        <button id="vqa-send-button" class="save-button" style="margin-top: 8px; padding: 10px 20px;">Ask question at 0:00</button>
+        <button id="vqa-send-button" class="save-button" style="margin-top: 16px; padding: 12px 20px;">Ask question at 0:00</button>
     </div>
 
     <div class="divider"></div>
 
     <div class="section">
         <div class="section-title">PRESENTATION CUSTOMIZATION</div>
+
+        <div class="slider-container">
+            <div class="slider-label">Volume:</div>
+            <input type="range" min="0" max="100" value="50" class="slider" id="vqa-volume-slider">
+        </div>
         
         <div class="slider-container">
             <div class="slider-label">Speed:</div>
             <input type="range" min="0" max="100" value="50" class="slider" id="vqa-speed-slider">
-        </div>
-        
-        <div class="slider-container">
-            <div class="slider-label">Volume:</div>
-            <input type="range" min="0" max="100" value="50" class="slider" id="vqa-volume-slider">
         </div>
 
         <div style="margin-bottom: 16px;">
