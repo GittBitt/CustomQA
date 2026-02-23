@@ -330,9 +330,23 @@
 }
 
 .chat-send-button {
+
     background: none;
+
     border: none;
+
     font-size: 18px;
+
     cursor: pointer;
+
     padding: 8px;
+
+}
+
+
+
+textarea {
+
+    font-family: inherit;
+
 }

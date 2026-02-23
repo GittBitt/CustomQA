@@ -47,22 +47,62 @@
                 // Tab switching functionality
                 const tabButtons = sidebar.querySelectorAll('.tab-button');
                 const tabContents = sidebar.querySelectorAll('.tab-content');
-                
+
+                const adTab = sidebar.querySelector('#audio-descriptions-tab');
+                const vqaTab = sidebar.querySelector('#vqa-tab');
+
+                const syncPresentationSettings = (sourceTab, destTab) => {
+                    if (!sourceTab || !destTab) return;
+
+                    const sourceSpeed = sourceTab.querySelector('.slider[id*="speed-slider"]');
+                    const sourceVolume = sourceTab.querySelector('.slider[id*="volume-slider"]');
+                    const sourceVoice = sourceTab.querySelector('.pill-button[data-voice].active');
+                    const sourceGender = sourceTab.querySelector('.pill-button[data-gender].active');
+
+                    const destSpeed = destTab.querySelector('.slider[id*="speed-slider"]');
+                    const destVolume = destTab.querySelector('.slider[id*="volume-slider"]');
+                    const destVoiceButtons = destTab.querySelectorAll('.pill-button[data-voice]');
+                    const destGenderButtons = destTab.querySelectorAll('.pill-button[data-gender]');
+
+                    if (sourceSpeed && destSpeed) destSpeed.value = sourceSpeed.value;
+                    if (sourceVolume && destVolume) destVolume.value = sourceVolume.value;
+
+                    if (sourceVoice) {
+                        destVoiceButtons.forEach(btn => {
+                            btn.classList.toggle('active', btn.dataset.voice === sourceVoice.dataset.voice);
+                        });
+                    }
+
+                    if (sourceGender) {
+                        destGenderButtons.forEach(btn => {
+                            btn.classList.toggle('active', btn.dataset.gender === sourceGender.dataset.gender);
+                        });
+                    }
+                };
+
                 tabButtons.forEach(button => {
                     button.addEventListener('click', () => {
                         const tabName = button.getAttribute('data-tab');
-                        
+                        const currentActiveTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+
                         // Update active tab button
                         tabButtons.forEach(btn => btn.classList.remove('active'));
                         button.classList.add('active');
-                        
+
                         // Show corresponding content
                         tabContents.forEach(content => {
                             content.style.display = 'none';
                         });
-                        sidebar.querySelector(`#${tabName}-tab`).style.display = 'block';
+                        const newActiveTab = sidebar.querySelector(`#${tabName}-tab`);
+                        newActiveTab.style.display = 'block';
+
+                        // Sync settings
+                        if (currentActiveTab && newActiveTab) {
+                            syncPresentationSettings(currentActiveTab, newActiveTab);
+                        }
                     });
                 });
+
 
                 // VQA sub-tab switching
                 const vqaSubTabButtons = sidebar.querySelectorAll('.vqa-sub-tab-button');
@@ -101,57 +141,7 @@
                     });
                 }
 
-                // Sync speed and volume sliders
-                const adSpeedSlider = sidebar.querySelector('#ad-speed-slider');
-                const adVolumeSlider = sidebar.querySelector('#ad-volume-slider');
-                const vqaSpeedSlider = sidebar.querySelector('#vqa-speed-slider');
-                const vqaVolumeSlider = sidebar.querySelector('#vqa-volume-slider');
-
-                adSpeedSlider.addEventListener('input', (e) => {
-                    vqaSpeedSlider.value = e.target.value;
-                });
-
-                vqaSpeedSlider.addEventListener('input', (e) => {
-                    adSpeedSlider.value = e.target.value;
-                });
-
-                adVolumeSlider.addEventListener('input', (e) => {
-                    vqaVolumeSlider.value = e.target.value;
-                });
-
-                vqaVolumeSlider.addEventListener('input', (e) => {
-                    adVolumeSlider.value = e.target.value;
-                });
-
                 // Add event listeners for button clicks
-                const syncPresentationButtons = (button) => {
-                    const voice = button.getAttribute('data-voice');
-                    const gender = button.getAttribute('data-gender');
-                    const sourceTab = button.closest('.tab-content').id;
-
-                    if (voice) {
-                        const otherTab = sourceTab === 'audio-descriptions-tab' ? 'vqa-tab' : 'audio-descriptions-tab';
-                        const otherButtons = sidebar.querySelectorAll(`#${otherTab} [data-voice]`);
-                        otherButtons.forEach(btn => {
-                            btn.classList.remove('active');
-                            if (btn.getAttribute('data-voice') === voice) {
-                                btn.classList.add('active');
-                            }
-                        });
-                    }
-
-                    if (gender) {
-                        const otherTab = sourceTab === 'audio-descriptions-tab' ? 'vqa-tab' : 'audio-descriptions-tab';
-                        const otherButtons = sidebar.querySelectorAll(`#${otherTab} [data-gender]`);
-                        otherButtons.forEach(btn => {
-                            btn.classList.remove('active');
-                            if (btn.getAttribute('data-gender') === gender) {
-                                btn.classList.add('active');
-                            }
-                        });
-                    }
-                };
-
                 sidebar.addEventListener('click', (e) => {
                     if (e.target.classList.contains('pill-button')) {
                         const buttonGroup = e.target.parentElement;
@@ -162,14 +152,27 @@
                         if (!isMultipleChoice) {
                             buttons.forEach(btn => btn.classList.remove('active'));
                             e.target.classList.add('active');
-                            if (e.target.hasAttribute('data-voice') || e.target.hasAttribute('data-gender')) {
-                                syncPresentationButtons(e.target);
-                            }
                         } else {
                             e.target.classList.toggle('active');
                         }
                     }
                 });
+
+                const pauseAdGroup = sidebar.querySelector('#pause-ad-group');
+                const audioDuckingSection = sidebar.querySelector('#audio-ducking-section');
+
+                if (pauseAdGroup && audioDuckingSection) {
+                    pauseAdGroup.addEventListener('click', (e) => {
+                        if (e.target.classList.contains('pill-button')) {
+                            const action = e.target.dataset.action;
+                            if (action === 'pause-off') {
+                                audioDuckingSection.style.display = 'block';
+                            } else if (action === 'pause-on') {
+                                audioDuckingSection.style.display = 'none';
+                            }
+                        }
+                    });
+                }
 
                 // Auto-resize textarea
                 const questionInput = sidebar.querySelector('#question-input');

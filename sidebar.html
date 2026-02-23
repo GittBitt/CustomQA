@@ -37,14 +37,14 @@
             <div class="subsection-title">Voice</div>
             <div class="button-group">
                 <button class="pill-button" data-voice="human">HUMAN</button>
-                <button class="pill-button" data-voice="synthesizer">SYNTHESIZER</button>
+                <button class="pill-button active" data-voice="synthesizer">SYNTHESIZER</button>
             </div>
         </div>
         
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Gender</div>
             <div class="button-group">
-                <button class="pill-button" data-gender="female">FEMALE</button>
+                <button class="pill-button active" data-gender="female">FEMALE</button>
                 <button class="pill-button" data-gender="male">MALE</button>
                 <button class="pill-button" data-gender="androgynous">ANDROGYNOUS</button>
             </div>
@@ -65,7 +65,7 @@
             <div class="subsection-title">Frequency:</div>
             <div class="button-group">
                 <button class="pill-button">RARELY</button>
-                <button class="pill-button">SOMETIMES</button>
+                <button class="pill-button active">SOMETIMES</button>
                 <button class="pill-button">OFTEN</button>
                 <button class="pill-button">VERY</button>
             </div>
@@ -84,7 +84,7 @@
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Narration Style:</div>
             <div class="button-group">
-                <button class="pill-button">STYLE 1</button>
+                <button class="pill-button active">STYLE 1</button>
                 <button class="pill-button">STYLE 2</button>
                 <button class="pill-button">STYLE 3</button>
             </div>
@@ -99,13 +99,21 @@
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Audio Description:</div>
             <div class="button-group">
-                <button class="pill-button">ON</button>
+                <button class="pill-button active">ON</button>
                 <button class="pill-button">OFF</button>
             </div>
         </div>
         
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Pause During AD:</div>
+            <div class="button-group" id="pause-ad-group">
+                <button class="pill-button active" data-action="pause-on">ON</button>
+                <button class="pill-button" data-action="pause-off">OFF</button>
+            </div>
+        </div>
+
+        <div id="audio-ducking-section" style="display: none; margin-bottom: 16px;">
+            <div class="subsection-title">Audio Ducking:</div>
             <div class="button-group">
                 <button class="pill-button">ON</button>
                 <button class="pill-button">OFF</button>
@@ -117,6 +125,44 @@
 </div>
 
 <div class="tab-content" id="vqa-tab" style="display: none;">
+
+    <div class="vqa-sub-tab-container">
+        <button class="vqa-sub-tab-button active" data-tab="chat">Chat</button>
+        <button class="vqa-sub-tab-button" data-tab="qa">Question & Answer</button>
+    </div>
+
+    <div class="vqa-sub-tab-content" id="qa-tab" style="display: none;">
+        <div class="section">
+            <div class="section-title">QUESTION</div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                <textarea id="question-input" placeholder="Type your question here or press Q..." style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; color: #888; resize: vertical; min-height: 38px;"></textarea>
+                <button id="mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
+            </div>
+            <div class="section-title">GENERATED ANSWER</div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <div id="answer-box" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; min-height: 50px; background-color: #f9f9f9; color: #333;">
+                    <!-- Generated answer will appear here -->
+                </div>
+                <button id="speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
+            </div>
+            <button class="save-button" style="margin-top: 8px;">Send</button>
+        </div>
+    </div>
+
+    <div class="vqa-sub-tab-content" id="chat-tab" style="display: block;">
+        <div class="chatbox">
+            <div class="chat-messages"></div>
+            <div class="chat-input-container">
+                <textarea class="chat-input" placeholder="Type your message..."></textarea>
+                <button id="chat-mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
+                <button id="chat-speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
+                <button class="chat-send-button">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="divider"></div>
+
     <div class="section">
         <div class="section-title">PRESENTATION CUSTOMIZATION</div>
         
@@ -147,42 +193,6 @@
             </div>
         </div>
         
-    </div>
-    
-    <div class="divider"></div>
-
-    <div class="vqa-sub-tab-container">
-        <button class="vqa-sub-tab-button active" data-tab="qa">Question & Answer</button>
-        <button class="vqa-sub-tab-button" data-tab="chat">Chat</button>
-    </div>
-
-    <div class="vqa-sub-tab-content" id="qa-tab">
-        <div class="section">
-            <div class="section-title">QUESTION</div>
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                <textarea id="question-input" placeholder="Type your question here or press Q..." style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; color: #888; resize: vertical; min-height: 38px;"></textarea>
-                <button id="mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
-            </div>
-            <div class="section-title">GENERATED ANSWER</div>
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <div id="answer-box" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; min-height: 50px; background-color: #f9f9f9; color: #333;">
-                    <!-- Generated answer will appear here -->
-                </div>
-                <button id="speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
-            </div>
-        </div>
-    </div>
-
-    <div class="vqa-sub-tab-content" id="chat-tab" style="display: none;">
-        <div class="chatbox">
-            <div class="chat-messages"></div>
-            <div class="chat-input-container">
-                <textarea class="chat-input" placeholder="Type your message..."></textarea>
-                <button id="chat-mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
-                <button id="chat-speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
-                <button class="chat-send-button">Send</button>
-            </div>
-        </div>
     </div>
 
     <div class="divider"></div>
