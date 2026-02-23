@@ -331,6 +331,61 @@
                 sidebar.setAttribute('tabindex', '0');
 
                 secondary.prepend(sidebar);
+
+                // Add timestamp functionality
+                const video = document.querySelector('video.html5-main-video');
+                const vqaSendButton = sidebar.querySelector('#vqa-send-button');
+
+                if (video && vqaSendButton) {
+                    video.addEventListener('timeupdate', () => {
+                        const minutes = Math.floor(video.currentTime / 60);
+                        const seconds = Math.floor(video.currentTime % 60).toString().padStart(2, '0');
+                        vqaSendButton.textContent = `Ask question at ${minutes}:${seconds}`;
+                    });
+
+                    vqaSendButton.addEventListener('click', () => {
+                        const chatInput = sidebar.querySelector('.chat-input');
+                        const chatMessages = sidebar.querySelector('.chat-messages');
+                        const question = chatInput.value.trim();
+
+                        if (question) {
+                            // Display user message
+                            const userMessage = document.createElement('div');
+                            userMessage.className = 'chat-message user-message';
+                            userMessage.textContent = question;
+                            chatMessages.appendChild(userMessage);
+
+                            chatInput.value = '';
+                            chatInput.style.height = 'auto'; // Reset height
+
+                            // Placeholder for AI response
+                            const aiMessage = document.createElement('div');
+                            aiMessage.className = 'chat-message bot-message';
+                            aiMessage.textContent = 'Thinking...';
+                            chatMessages.appendChild(aiMessage);
+
+                            // Scroll to the bottom of the chat
+                            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                            // Placeholder for API call
+                            const startTimeOffset = sidebar.querySelector('#start-time-offset').value;
+                            const endTimeOffset = sidebar.querySelector('#end-time-offset').value;
+                            const currentTime = video.currentTime;
+                            
+                            console.log('--- AI Studio API Call Placeholder ---');
+                            console.log('Question:', question);
+                            console.log('Timestamp:', currentTime);
+                            console.log('Start Offset:', startTimeOffset);
+                            console.log('End Offset:', endTimeOffset);
+                            console.log('------------------------------------');
+
+                            // Simulate AI response after a delay
+                            setTimeout(() => {
+                                aiMessage.textContent = "This is a placeholder response from the AI. The actual implementation will use the Google AI Studio API.";
+                            }, 1500);
+                        }
+                    });
+                }
                 
                 return true;
             }
@@ -354,5 +409,18 @@
         }
         // Try to inject sidebar on new page
         init();
+    });
+
+    // Handle messages from the popup
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        if (request.type === "GET_TIMESTAMP") {
+            const video = document.querySelector('.html5-main-video');
+            if (video) {
+                sendResponse({ timestamp: video.currentTime });
+            } else {
+                sendResponse({ timestamp: null });
+            }
+        }
+        return true; // Indicates that the response is sent asynchronously
     });
 })();

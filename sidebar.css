@@ -350,3 +350,36 @@ textarea {
     font-family: inherit;
 
 }
+
+.time-offset-section {
+    padding: 10px;
+    background-color: #f9f9f9;
+    border-radius: 8px;
+    margin-top: 16px;
+}
+
+.time-offset-section .subsection-title {
+    margin-bottom: 10px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.time-offset-section div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.time-offset-section label {
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.time-offset-section input {
+    width: 60px;
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 13px;
+    text-align: center;
+}
