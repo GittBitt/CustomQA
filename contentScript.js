@@ -42,6 +42,8 @@
                 styleElement.textContent = css;
                 document.head.appendChild(styleElement);
 
+                // No SDK script needed - we'll use the REST API directly
+
                 sidebar.innerHTML = html;
 
                 // Tab switching functionality
@@ -358,31 +360,89 @@
                             chatInput.value = '';
                             chatInput.style.height = 'auto'; // Reset height
 
-                            // Placeholder for AI response
+                            // Create AI message container with speaker button
+                            const aiMessageContainer = document.createElement('div');
+                            aiMessageContainer.style.display = 'flex';
+                            aiMessageContainer.style.alignItems = 'flex-start';
+                            aiMessageContainer.style.gap = '8px';
+                            aiMessageContainer.style.marginBottom = '12px';
+
                             const aiMessage = document.createElement('div');
                             aiMessage.className = 'chat-message bot-message';
                             aiMessage.textContent = 'Thinking...';
-                            chatMessages.appendChild(aiMessage);
+                            aiMessage.style.flex = '1';
+
+                            const speakerBtn = document.createElement('button');
+                            speakerBtn.textContent = '🔊';
+                            speakerBtn.style.background = 'none';
+                            speakerBtn.style.border = 'none';
+                            speakerBtn.style.fontSize = '18px';
+                            speakerBtn.style.cursor = 'pointer';
+                            speakerBtn.style.padding = '0';
+                            speakerBtn.style.marginTop = '8px';
+                            speakerBtn.style.opacity = '0.5';
+                            speakerBtn.style.transition = 'opacity 0.2s';
+                            
+                            speakerBtn.addEventListener('mouseover', () => speakerBtn.style.opacity = '1');
+                            speakerBtn.addEventListener('mouseout', () => speakerBtn.style.opacity = '0.5');
+                            
+                            speakerBtn.addEventListener('click', () => {
+                                const textToSpeak = aiMessage.textContent;
+                                if (textToSpeak && textToSpeak !== 'Thinking...') {
+                                    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                                    window.speechSynthesis.speak(utterance);
+                                }
+                            });
+
+                            aiMessageContainer.appendChild(aiMessage);
+                            aiMessageContainer.appendChild(speakerBtn);
+                            chatMessages.appendChild(aiMessageContainer);
 
                             // Scroll to the bottom of the chat
                             chatMessages.scrollTop = chatMessages.scrollHeight;
 
-                            // Placeholder for API call
-                            const startTimeOffset = sidebar.querySelector('#start-time-offset').value;
-                            const endTimeOffset = sidebar.querySelector('#end-time-offset').value;
                             const currentTime = video.currentTime;
-                            
-                            console.log('--- AI Studio API Call Placeholder ---');
-                            console.log('Question:', question);
-                            console.log('Timestamp:', currentTime);
-                            console.log('Start Offset:', startTimeOffset);
-                            console.log('End Offset:', endTimeOffset);
-                            console.log('------------------------------------');
 
-                            // Simulate AI response after a delay
-                            setTimeout(() => {
-                                aiMessage.textContent = "This is a placeholder response from the AI. The actual implementation will use the Google AI Studio API.";
-                            }, 1500);
+                            const callGemini = async () => {
+                                try {
+                                    const youtubeUrl = window.location.href;
+                                    const currentTime = video.currentTime;
+
+                                    // Format timestamp
+                                    const formatTime = (seconds) => {
+                                        const mins = Math.floor(seconds / 60);
+                                        const secs = Math.floor(seconds % 60);
+                                        return `${mins}:${secs.toString().padStart(2, '0')}`;
+                                    };
+
+                                    const prompt = `User is watching a YouTube video at timestamp ${formatTime(currentTime)}.
+Video URL: ${youtubeUrl}
+User's question: "${question}"
+
+Note: I don't have access to the actual video content, so I can only provide general guidance based on the question and timestamp. Please answer their question based on what they're likely asking about, or ask for clarification if needed. Keep the response concise and helpful.`;
+
+                                    console.log('Sending CALL_GEMINI message to background script');
+                                    // Send message to background script to avoid CORS issues
+                                    chrome.runtime.sendMessage({
+                                        type: 'CALL_GEMINI',
+                                        prompt: prompt
+                                    }, (response) => {
+                                        console.log('Received response from background:', response);
+                                        if (response && response.success) {
+                                            aiMessage.textContent = response.text;
+                                            speakerBtn.style.opacity = '1';
+                                        } else {
+                                            aiMessage.textContent = `Error: ${response?.error || 'Unknown error occurred'}`;
+                                            console.error('Gemini API error:', response?.error);
+                                        }
+                                    });
+                                } catch (error) {
+                                    console.error("Error calling Gemini API:", error);
+                                    aiMessage.textContent = `Error: ${error.message}`;
+                                }
+                            };
+
+                            callGemini();
                         }
                     });
                 }

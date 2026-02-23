@@ -10,7 +10,8 @@
         "tts"
     ],
     "host_permissions": [
-        "https://*.youtube.com/*"
+        "https://*.youtube.com/*",
+        "https://generativelanguage.googleapis.com/*"
     ],
     "background": {
         "service_worker": "background.js"
@@ -28,6 +29,7 @@
                 "popup.js",
                 "sidebar.html",
                 "sidebar.css",
+                "config.json",
                 "assets/activation.mp3"
             ],
             "matches": ["https://*.youtube.com/*"]
