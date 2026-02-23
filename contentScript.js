@@ -242,18 +242,6 @@
                     }
                 });
 
-                // Text-to-speech
-                const speakerButton = sidebar.querySelector('#speaker-button');
-                speakerButton.addEventListener('click', () => {
-                    const answerBox = sidebar.querySelector('#answer-box');
-                    const textToSpeak = answerBox.textContent;
-
-                    if (textToSpeak) {
-                        const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                        speechSynthesis.speak(utterance);
-                    }
-                });
-
                 // Chat Speech-to-text
                 let isListeningChatMicButton = false;
                 let recognitionChatMicButton = null;
@@ -334,7 +322,7 @@
 
                 secondary.prepend(sidebar);
 
-                // Add timestamp functionality
+                // Add timestamp functionality for CHAT tab
                 const video = document.querySelector('video.html5-main-video');
                 const vqaSendButton = sidebar.querySelector('#vqa-send-button');
 
@@ -343,6 +331,11 @@
                         const minutes = Math.floor(video.currentTime / 60);
                         const seconds = Math.floor(video.currentTime % 60).toString().padStart(2, '0');
                         vqaSendButton.textContent = `Ask question at ${minutes}:${seconds}`;
+                        // Also update QA tab timestamp button
+                        const qaSendButton = sidebar.querySelector('#qa-send-button');
+                        if (qaSendButton) {
+                            qaSendButton.textContent = `Ask question at ${minutes}:${seconds}`;
+                        }
                     });
 
                     vqaSendButton.addEventListener('click', () => {
@@ -459,6 +452,88 @@ Please analyze the video frame shown and answer their question about what's happ
                             };
 
                             callGemini();
+                        }
+                    });
+
+                    // QA Tab Send Button
+                    const qaSendButton = sidebar.querySelector('#qa-send-button');
+                    const questionInput = sidebar.querySelector('#question-input');
+                    const answerBox = sidebar.querySelector('#answer-box');
+
+                    qaSendButton.addEventListener('click', () => {
+                        const question = questionInput.value.trim();
+
+                        if (question) {
+                            // Pause the video
+                            video.pause();
+
+                            // Clear previous answer
+                            answerBox.textContent = 'Thinking...';
+
+                            const callGeminiQA = async () => {
+                                try {
+                                    // Capture video frame
+                                    console.log('Capturing video frame for QA...');
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = video.videoWidth;
+                                    canvas.height = video.videoHeight;
+                                    const ctx = canvas.getContext('2d');
+                                    ctx.drawImage(video, 0, 0);
+                                    const frameData = canvas.toDataURL('image/jpeg').split(',')[1]; // Remove data URL prefix
+
+                                    // Format timestamp
+                                    const formatTime = (seconds) => {
+                                        const mins = Math.floor(seconds / 60);
+                                        const secs = Math.floor(seconds % 60);
+                                        return `${mins}:${secs.toString().padStart(2, '0')}`;
+                                    };
+
+                                    const currentTime = video.currentTime;
+                                    const prompt = `User is watching a YouTube video at timestamp ${formatTime(currentTime)}.
+User's question: "${question}"
+
+Please analyze the video frame shown and answer their question about what's happening in the video at this moment.`;
+
+                                    console.log('Sending CALL_GEMINI message for QA with video frame to background script');
+                                    // Send message to background script with the video frame
+                                    chrome.runtime.sendMessage({
+                                        type: 'CALL_GEMINI',
+                                        prompt: prompt,
+                                        frameData: frameData
+                                    }, (response) => {
+                                        console.log('Received QA response from background:', response);
+                                        if (response && response.success) {
+                                            answerBox.textContent = response.text;
+                                            
+                                            // Auto-play voice response
+                                            const utterance = new SpeechSynthesisUtterance(response.text);
+                                            window.speechSynthesis.speak(utterance);
+
+                                            // Clear question input after receiving answer
+                                            questionInput.value = '';
+                                        } else {
+                                            answerBox.textContent = `Error: ${response?.error || 'Unknown error occurred'}`;
+                                            console.error('Gemini API error:', response?.error);
+                                        }
+                                    });
+                                } catch (error) {
+                                    console.error("Error calling Gemini API for QA:", error);
+                                    answerBox.textContent = `Error: ${error.message}`;
+                                }
+                            };
+
+                            callGeminiQA();
+                        }
+                    });
+
+                    // QA Tab Speaker Button
+                    const qaSpeakerButton = sidebar.querySelector('#speaker-button');
+                    qaSpeakerButton.addEventListener('click', () => {
+                        const textToSpeak = answerBox.textContent;
+
+                        if (textToSpeak && textToSpeak !== 'Thinking...') {
+                            const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                            window.speechSynthesis.speak(utterance);
                         }
                     });
                 }
