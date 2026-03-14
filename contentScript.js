@@ -105,25 +105,6 @@
                     });
                 });
 
-
-                // VQA sub-tab switching
-                const vqaSubTabButtons = sidebar.querySelectorAll('.vqa-sub-tab-button');
-                const vqaSubTabContents = sidebar.querySelectorAll('.vqa-sub-tab-content');
-
-                vqaSubTabButtons.forEach(button => {
-                    button.addEventListener('click', () => {
-                        const tabName = button.getAttribute('data-tab');
-
-                        vqaSubTabButtons.forEach(btn => btn.classList.remove('active'));
-                        button.classList.add('active');
-
-                        vqaSubTabContents.forEach(content => {
-                            content.style.display = 'none';
-                        });
-                        sidebar.querySelector(`#${tabName}-tab`).style.display = 'block';
-                    });
-                });
-
                 // Length slider update
                 const lengthSlider = sidebar.querySelector('#length-slider');
                 const lengthValue = sidebar.querySelector('#length-value');
@@ -131,15 +112,6 @@
                 if (lengthSlider && lengthValue) {
                     lengthSlider.addEventListener('input', (e) => {
                         lengthValue.textContent = e.target.value;
-                    });
-                }
-
-                const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
-                const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
-
-                if (vqaLengthSlider && vqaLengthValue) {
-                    vqaLengthSlider.addEventListener('input', (e) => {
-                        vqaLengthValue.textContent = e.target.value;
                     });
                 }
 
@@ -175,95 +147,6 @@
                         }
                     });
                 }
-
-                // Auto-resize textarea
-                const questionInput = sidebar.querySelector('#question-input');
-                const answerBox = sidebar.querySelector('#answer-box'); // Get answerBox here
-
-                questionInput.addEventListener('input', () => {
-                    questionInput.style.height = 'auto';
-                    questionInput.style.height = `${questionInput.scrollHeight}px`;
-                    answerBox.textContent = questionInput.value; // Mirror question to answer
-                });
-
-                let isListeningMicButton = false;
-                let recognitionMicButton = null;
-                const micButton = sidebar.querySelector('#mic-button');
-                const activationSound = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
-                micButton.addEventListener('click', () => {
-                    if (isListeningMicButton) {
-                        recognitionMicButton.stop();
-                        isListeningMicButton = false;
-                        micButton.classList.remove('listening');
-                        try {
-                            activationSound.play(); // Play sound on stop as well
-                            console.log('activationSound:', activationSound);
-                        } catch (error) {
-                            console.error('Error playing activation sound:', error);
-                        }
-                    } else {
-                        recognitionMicButton = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-                        recognitionMicButton.lang = 'en-US';
-                        recognitionMicButton.interimResults = false;
-                        recognitionMicButton.maxAlternatives = 1;
-
-                        console.log('activationSound:', activationSound);
-                        try {
-                            activationSound.play();
-                        } catch (error) {
-                            console.error('Error playing activation sound:', error);
-                        }
-
-                        recognitionMicButton.start();
-                        isListeningMicButton = true;
-                        micButton.classList.add('listening');
-
-                        recognitionMicButton.onresult = (event) => {
-                            questionInput.value = event.results[0][0].transcript;
-                        };
-
-                        recognitionMicButton.onspeechend = () => {
-                            recognitionMicButton.stop();
-                            isListeningMicButton = false;
-                            micButton.classList.remove('listening');
-                            try {
-                                activationSound.play();
-                            } catch (error) {
-                                console.error('Error playing activation sound:', error);
-                            }
-                        };
-
-                        recognitionMicButton.onerror = (event) => {
-                            console.error('Speech recognition error:', event.error);
-                            isListeningMicButton = false;
-                            micButton.classList.remove('listening');
-                        };
-                    }
-                });
-
-                // Question Speaker Button (QA Tab)
-                let isQuestionSpeaking = false;
-                const questionSpeakerButton = sidebar.querySelector('#question-speaker-button');
-                questionSpeakerButton.addEventListener('click', () => {
-                    const textToSpeak = questionInput.value.trim();
-
-                    if (isQuestionSpeaking) {
-                        // Stop speaking
-                        window.speechSynthesis.cancel();
-                        isQuestionSpeaking = false;
-                        questionSpeakerButton.textContent = '🔊';
-                    } else if (textToSpeak) {
-                        // Start speaking
-                        const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                        utterance.onend = () => {
-                            isQuestionSpeaking = false;
-                            questionSpeakerButton.textContent = '🔊';
-                        };
-                        window.speechSynthesis.speak(utterance);
-                        isQuestionSpeaking = true;
-                        questionSpeakerButton.textContent = '⏸';
-                    }
-                });
 
                 // Chat Speech-to-text
                 let isListeningChatMicButton = false;
@@ -369,11 +252,6 @@
                         const minutes = Math.floor(video.currentTime / 60);
                         const seconds = Math.floor(video.currentTime % 60).toString().padStart(2, '0');
                         vqaSendButton.textContent = `Ask question at ${minutes}:${seconds}`;
-                        // Also update QA tab timestamp button
-                        const qaSendButton = sidebar.querySelector('#qa-send-button');
-                        if (qaSendButton) {
-                            qaSendButton.textContent = `Ask question at ${minutes}:${seconds}`;
-                        }
                     });
 
                     vqaSendButton.addEventListener('click', () => {
@@ -556,107 +434,6 @@ Please analyze the video frame shown and answer their question about what's happ
                             };
 
                             callGemini();
-                        }
-                    });
-
-                    // QA Tab Send Button
-                    const qaSendButton = sidebar.querySelector('#qa-send-button');
-                    const questionInput = sidebar.querySelector('#question-input');
-                    const answerBox = sidebar.querySelector('#answer-box');
-
-                    qaSendButton.addEventListener('click', () => {
-                        const question = questionInput.value.trim();
-
-                        if (question) {
-                            // Pause the video
-                            video.pause();
-
-                            // Clear previous answer
-                            answerBox.textContent = 'Thinking...';
-
-                            const callGeminiQA = async () => {
-                                try {
-                                    // Capture video frame
-                                    console.log('Capturing video frame for QA...');
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = video.videoWidth;
-                                    canvas.height = video.videoHeight;
-                                    const ctx = canvas.getContext('2d');
-                                    ctx.drawImage(video, 0, 0);
-                                    const frameData = canvas.toDataURL('image/jpeg').split(',')[1]; // Remove data URL prefix
-
-                                    // Format timestamp
-                                    const formatTime = (seconds) => {
-                                        const mins = Math.floor(seconds / 60);
-                                        const secs = Math.floor(seconds % 60);
-                                        return `${mins}:${secs.toString().padStart(2, '0')}`;
-                                    };
-
-                                    const currentTime = video.currentTime;
-                                    const prompt = `User is watching a YouTube video at timestamp ${formatTime(currentTime)}.
-User's question: "${question}"
-
-Please analyze the video frame shown and answer their question about what's happening in the video at this moment.`;
-
-                                    console.log('Sending CALL_GEMINI message for QA with video frame to background script');
-                                    // Send message to background script with the video frame
-                                    chrome.runtime.sendMessage({
-                                        type: 'CALL_GEMINI',
-                                        prompt: prompt,
-                                        frameData: frameData
-                                    }, (response) => {
-                                        console.log('Received QA response from background:', response);
-                                        if (response && response.success) {
-                                            answerBox.textContent = response.text;
-                                            
-                                            // Auto-play voice response with VQA settings
-                                            const utterance = new SpeechSynthesisUtterance(response.text);
-                                            const speedSlider = sidebar.querySelector('#vqa-speed-slider');
-                                            const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
-                                            if (speedSlider) utterance.rate = speedSlider.value / 50;
-                                            if (volumeSlider) utterance.volume = volumeSlider.value / 100;
-                                            window.speechSynthesis.speak(utterance);
-
-                                            // Clear question input after receiving answer
-                                            questionInput.value = '';
-                                        } else {
-                                            answerBox.textContent = `Error: ${response?.error || 'Unknown error occurred'}`;
-                                            console.error('Gemini API error:', response?.error);
-                                        }
-                                    });
-                                } catch (error) {
-                                    console.error("Error calling Gemini API for QA:", error);
-                                    answerBox.textContent = `Error: ${error.message}`;
-                                }
-                            };
-
-                            callGeminiQA();
-                        }
-                    });
-
-                    // QA Tab Speaker Button with toggle
-                    const qaSpeakerButton = sidebar.querySelector('#speaker-button');
-                    let isQAAnswerSpeaking = false;
-                    qaSpeakerButton.addEventListener('click', () => {
-                        const textToSpeak = answerBox.textContent;
-
-                        if (isQAAnswerSpeaking) {
-                            window.speechSynthesis.cancel();
-                            isQAAnswerSpeaking = false;
-                            qaSpeakerButton.textContent = '🔊';
-                        } else if (textToSpeak && textToSpeak !== 'Thinking...') {
-                            const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                            const speedSlider = sidebar.querySelector('#vqa-speed-slider');
-                            const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
-                            if (speedSlider) utterance.rate = speedSlider.value / 50;
-                            if (volumeSlider) utterance.volume = volumeSlider.value / 100;
-                            utterance.onend = () => {
-                                isQAAnswerSpeaking = false;
-                                qaSpeakerButton.textContent = '🔊';
-                            };
-                            window.speechSynthesis.speak(utterance);
-                            isQAAnswerSpeaking = true;
-                            qaSpeakerButton.textContent = '⏸';
                         }
                     });
                 }
