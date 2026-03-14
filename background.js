@@ -1,4 +1,4 @@
-console.log('Background script loaded');
+console.log('Background script loaded - VERSION 2');
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.tabs.query({}, (tabs) => {
@@ -44,12 +44,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 async function callGeminiAPI(prompt, frameData) {
+  let apiKey = '';
   try {
-    console.log('[API] Fetching config.json');
-    // Fetch API key from config
-    const configResponse = await fetch(chrome.runtime.getURL('config.json'));
-    const config = await configResponse.json();
-    const apiKey = config.API_KEY;
+    console.log('[API] 1');
+    const envResponse = await fetch(chrome.runtime.getURL('.env'));
+    console.log('[API] 2');
+    const envText = await envResponse.text();
+    console.log('[API] 3');
+    const apiKey = envText.split('API_KEY=')[1].trim();
+    console.log(`[API] Using API Key: ${apiKey}`);
     const model = "gemini-2.5-flash"; // Use current 2.5 Flash model
     
     console.log('[API] API Key loaded, making request to Gemini');
@@ -127,7 +130,7 @@ async function callGeminiAPI(prompt, frameData) {
     }
   } catch (error) {
     console.error("[API] Error calling Gemini API:", error.message);
-    throw error;
+    throw new Error(`[API] Error calling Gemini API: ${error.message}. API Key used: ${apiKey}`);
   }
 }
   

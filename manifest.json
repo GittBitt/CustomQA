@@ -29,7 +29,7 @@
                 "popup.js",
                 "sidebar.html",
                 "sidebar.css",
-                "config.json",
+                ".env",
                 "assets/activation.mp3"
             ],
             "matches": ["https://*.youtube.com/*"]
