@@ -1,4 +1,20 @@
 (() => {
+    let currentVolume = 1; // Default volume
+
+    // Load initial volume from storage
+    chrome.storage.sync.get('volume', (data) => {
+        if (data.volume) {
+            currentVolume = parseFloat(data.volume) / 100;
+        }
+    });
+
+    // Listen for volume changes in storage
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+        if (changes.volume) {
+            currentVolume = parseFloat(changes.volume.newValue) / 100;
+        }
+    });
+
     const newVideoLoaded = async () => {
         if (!window.location.href.includes('watch?v=')) {
             return false;
@@ -45,6 +61,34 @@
                 // No SDK script needed - we'll use the REST API directly
 
                 sidebar.innerHTML = html;
+
+                // Load and set volume for both sliders
+                const adVolumeSlider = sidebar.querySelector('#ad-volume-slider');
+                const vqaVolumeSlider = sidebar.querySelector('#vqa-volume-slider');
+
+                const setSliderValues = (volume) => {
+                    if (adVolumeSlider) adVolumeSlider.value = volume;
+                    if (vqaVolumeSlider) vqaVolumeSlider.value = volume;
+                };
+
+                chrome.storage.sync.get('volume', (data) => {
+                    if (data.volume) {
+                        setSliderValues(data.volume);
+                    }
+                });
+
+                const volumeChangeHandler = (e) => {
+                    const newVolume = e.target.value;
+                    chrome.storage.sync.set({ volume: newVolume });
+                    setSliderValues(newVolume); // Keep sliders in sync
+                };
+
+                if (adVolumeSlider) {
+                    adVolumeSlider.addEventListener('input', volumeChangeHandler);
+                }
+                if (vqaVolumeSlider) {
+                    vqaVolumeSlider.addEventListener('input', volumeChangeHandler);
+                }
 
                 // Tab switching functionality
                 const tabButtons = sidebar.querySelectorAll('.tab-button');
@@ -219,7 +263,7 @@
                         const speedSlider = sidebar.querySelector('#vqa-speed-slider');
                         const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
                         if (speedSlider) utterance.rate = speedSlider.value / 50;
-                        if (volumeSlider) utterance.volume = volumeSlider.value / 100;
+                        utterance.volume = currentVolume;
                         utterance.onend = () => {
                             isChatInputSpeaking = false;
                             chatSpeakerButton.textContent = '🔊';
@@ -292,11 +336,8 @@
                                     isUserQuestionSpeaking = false;
                                     userSpeakerBtn.textContent = '🔊';
                                 } else {
-                                    const utterance = new SpeechSynthesisUtterance(question);
-                                    const speedSlider = sidebar.querySelector('#vqa-speed-slider');
-                                    const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
                                     if (speedSlider) utterance.rate = speedSlider.value / 50;
-                                    if (volumeSlider) utterance.volume = volumeSlider.value / 100;
+                                    utterance.volume = currentVolume;
                                     utterance.onend = () => {
                                         isUserQuestionSpeaking = false;
                                         userSpeakerBtn.textContent = '🔊';
@@ -357,8 +398,7 @@
                                     const speedSlider = sidebar.querySelector('#vqa-speed-slider');
                                     const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
                                     if (speedSlider) utterance.rate = speedSlider.value / 50;
-                                    if (volumeSlider) utterance.volume = volumeSlider.value / 100;
-                                    utterance.onend = () => {
+                                                                                utterance.volume = currentVolume;                                    utterance.onend = () => {
                                         isAIMessageSpeaking = false;
                                         speakerBtn.textContent = '🔊';
                                     };
@@ -420,7 +460,7 @@ Please analyze the video frame shown and answer their question about what's happ
                                             const speedSlider = sidebar.querySelector('#vqa-speed-slider');
                                             const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
                                             if (speedSlider) utterance.rate = speedSlider.value / 50;
-                                            if (volumeSlider) utterance.volume = volumeSlider.value / 100;
+                                    utterance.volume = currentVolume;
                                             window.speechSynthesis.speak(utterance);
                                         } else {
                                             aiMessage.textContent = `Error: ${response?.error || 'Unknown error occurred'}`;
