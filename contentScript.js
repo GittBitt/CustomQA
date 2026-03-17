@@ -152,10 +152,29 @@
                 // Length slider update
                 const lengthSlider = sidebar.querySelector('#length-slider');
                 const lengthValue = sidebar.querySelector('#length-value');
-                
-                if (lengthSlider && lengthValue) {
+                const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
+                const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
+
+                const syncLengthSliders = (sourceSlider) => {
+                    const newValue = sourceSlider.value;
+                    if (lengthSlider && lengthValue) {
+                        lengthSlider.value = newValue;
+                        lengthValue.textContent = newValue;
+                    }
+                    if (vqaLengthSlider && vqaLengthValue) {
+                        vqaLengthSlider.value = newValue;
+                        vqaLengthValue.textContent = newValue;
+                    }
+                };
+
+                if (lengthSlider) {
                     lengthSlider.addEventListener('input', (e) => {
-                        lengthValue.textContent = e.target.value;
+                        syncLengthSliders(e.target);
+                    });
+                }
+                if (vqaLengthSlider) {
+                    vqaLengthSlider.addEventListener('input', (e) => {
+                        syncLengthSliders(e.target);
                     });
                 }
 
@@ -438,10 +457,13 @@
                                         return `${mins}:${secs.toString().padStart(2, '0')}`;
                                     };
 
+                                    const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
+                                    const wordCount = vqaLengthSlider ? vqaLengthSlider.value : 20;
+
                                     const prompt = `User is watching a YouTube video at timestamp ${formatTime(currentTime)}.
 User's question: "${question}"
 
-Please analyze the video frame shown and answer their question about what's happening in the video at this moment.`;
+Please analyze the video frame shown and answer their question about what's happening in the video at this moment. Please answer in approximately ${wordCount} words.`;
 
                                     console.log('Sending CALL_GEMINI message with video frame to background script');
                                     // Send message to background script with the video frame
