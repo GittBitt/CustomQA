@@ -20,6 +20,7 @@
             return false;
         }
 
+        const video = document.querySelector('video.html5-main-video');
         let currentAudio = null;
         let currentPlayingButton = null;
 
@@ -37,12 +38,16 @@
             const audio = new Audio(dataUrl);
             audio.volume = currentVolume;
             
+            // Get speed from whichever slider is available (AD or VQA)
+            const adSpeedSlider = document.getElementById('ad-speed-slider');
             const vqaSpeedSlider = document.getElementById('vqa-speed-slider');
-            if (vqaSpeedSlider) {
-                audio.playbackRate = parseFloat(vqaSpeedSlider.value) / 50;
+            const speedSlider = adSpeedSlider || vqaSpeedSlider;
+            
+            if (speedSlider) {
+                audio.playbackRate = parseFloat(speedSlider.value) / 50;
                 console.log('Current playback speed:', audio.playbackRate);
             } else {
-                console.log('VQA Speed Slider not found, defaulting to 1x speed.');
+                console.log('Speed Slider not found, defaulting to 1x speed.');
                 audio.playbackRate = 1;
             }
             
@@ -244,6 +249,27 @@
                     });
                 }
 
+                // Speed slider sync
+                const adSpeedSlider = sidebar.querySelector('#ad-speed-slider');
+                const vqaSpeedSlider = sidebar.querySelector('#vqa-speed-slider');
+
+                const syncSpeedSliders = (sourceSlider) => {
+                    const newValue = sourceSlider.value;
+                    if (adSpeedSlider) adSpeedSlider.value = newValue;
+                    if (vqaSpeedSlider) vqaSpeedSlider.value = newValue;
+                };
+
+                if (adSpeedSlider) {
+                    adSpeedSlider.addEventListener('input', (e) => {
+                        syncSpeedSliders(e.target);
+                    });
+                }
+                if (vqaSpeedSlider) {
+                    vqaSpeedSlider.addEventListener('input', (e) => {
+                        syncSpeedSliders(e.target);
+                    });
+                }
+
                 // Add event listeners for button clicks
                 sidebar.addEventListener('click', (e) => {
                     if (e.target.classList.contains('pill-button')) {
@@ -348,7 +374,8 @@
                     console.log('Chat speaker button clicked.');
                     const chatInput = sidebar.querySelector('.chat-input');
                     const textToSpeak = chatInput.value;
-                    const gender = sidebar.querySelector('#vqa-gender-group .pill-button.active').dataset.gender;
+                    const genderBtn = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                    const gender = genderBtn ? genderBtn.dataset.gender : 'female';
 
                     if (textToSpeak) {
                         chrome.runtime.sendMessage({
@@ -365,6 +392,275 @@
                     }
                 });
 
+                let adSchedule = [];
+
+                const captureVideoFrame = async (timeInSeconds) => {
+                    return new Promise((resolve, reject) => {
+                        const originalTime = video.currentTime;
+                        const seekHandler = () => {
+                            try {
+                                const canvas = document.createElement('canvas');
+                                canvas.width = video.videoWidth;
+                                canvas.height = video.videoHeight;
+                                const ctx = canvas.getContext('2d');
+                                ctx.drawImage(video, 0, 0);
+                                const frameData = canvas.toDataURL('image/jpeg').split(',')[1];
+                                
+                                video.removeEventListener('seeked', seekHandler);
+                                video.currentTime = originalTime;
+                                resolve(frameData);
+                            } catch (error) {
+                                video.removeEventListener('seeked', seekHandler);
+                                video.currentTime = originalTime;
+                                reject(error);
+                            }
+                        };
+                        video.addEventListener('seeked', seekHandler, { once: true });
+                        video.currentTime = timeInSeconds;
+                    });
+                };
+
+                const generateAdButton = sidebar.querySelector('#generate-ad-button');
+                if (generateAdButton) {
+                    generateAdButton.addEventListener('click', async () => {
+                        if (!video) {
+                            console.error('Video element not found.');
+                            return;
+                        }
+                        
+                        const duration = video.duration;
+                        const frequency = sidebar.querySelector('.pill-button[data-frequency].active')?.dataset.frequency || 'sometimes';
+                        
+                        let interval;
+                        switch (frequency) {
+                            case 'rarely':
+                                interval = 120;
+                                break;
+                            case 'sometimes':
+                                interval = 60;
+                                break;
+                            case 'often':
+                                interval = 30;
+                                break;
+                            case 'very':
+                                interval = 15;
+                                break;
+                            default:
+                                interval = 60;
+                        }
+
+                        const timestamps = [];
+                        for (let i = 0; i < duration; i += interval) {
+                            timestamps.push(i);
+                        }
+
+                        console.log('[AD] Capturing frames at timestamps:', timestamps);
+                        generateAdButton.textContent = 'Capturing frames...';
+                        generateAdButton.disabled = true;
+
+                        try {
+                            const frames = [];
+                            for (const timestamp of timestamps) {
+                                try {
+                                    console.log(`[AD] Capturing frame at ${timestamp}s`);
+                                    const frameData = await captureVideoFrame(timestamp);
+                                    frames.push({
+                                        timestamp: timestamp,
+                                        frameData: frameData
+                                    });
+                                } catch (error) {
+                                    console.error(`[AD] Failed to capture frame at ${timestamp}s:`, error);
+                                }
+                            }
+
+                            if (frames.length === 0) {
+                                console.error('No frames captured.');
+                                generateAdButton.textContent = 'GENERATE AD';
+                                generateAdButton.disabled = false;
+                                return;
+                            }
+
+                            console.log('[AD] Frame capture complete. Sending to Gemini...');
+                            generateAdButton.textContent = 'Generating descriptions...';
+
+                            const customizations = {
+                                length: sidebar.querySelector('#length-slider').value,
+                                emphasis: sidebar.querySelector('.pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
+                                subjectiveness: sidebar.querySelector('.pill-button[data-narration].active')?.dataset.narration || 'objective',
+                                colorPreference: sidebar.querySelector('.pill-button[data-color].active')?.dataset.color || 'on',
+                            };
+
+                            const videoUrl = window.location.href;
+
+                            chrome.runtime.sendMessage({
+                                type: 'CALL_GEMINI_FOR_AD',
+                                customizations: customizations,
+                                frames: frames,
+                                videoUrl: videoUrl
+                            }, (response) => {
+                                generateAdButton.textContent = 'GENERATE AD';
+                                generateAdButton.disabled = false;
+
+                                if (response && response.success) {
+                                    console.log('AD Generation successful:', response.text);
+                                    try {
+                                        // Strip markdown and parse
+                                        const jsonString = response.text.replace(/```json\n|```/g, '');
+                                        const adData = JSON.parse(jsonString);
+                                        
+                                        let descriptions = [];
+                                        if (adData.VideoMetadata && adData.VideoMetadata.audio_descriptions) {
+                                            descriptions = adData.VideoMetadata.audio_descriptions;
+                                        } else if (adData.audio_descriptions) {
+                                            descriptions = adData.audio_descriptions;
+                                        } else if (adData.VideoMetadata && adData.VideoMetadata.AudioDescriptions) {
+                                            descriptions = adData.VideoMetadata.AudioDescriptions;
+                                        }
+
+                                        adSchedule = descriptions.map(desc => ({
+                                            timestamp: (desc.timestamp_ms || desc.timestamp_in_seconds * 1000) / 1000,
+                                            description: desc.description,
+                                            played: false
+                                        }));
+                                        displayAdBubbles(adSchedule);
+                                    } catch (e) {
+                                        console.error('Error parsing AD response:', e);
+                                        alert('Error parsing audio descriptions. Check console for details.');
+                                    }
+                                } else {
+                                    console.error('AD Generation error:', response?.error);
+                                    alert(`AD Generation error: ${response?.error || 'Unknown error'}`);
+                                }
+                            });
+                        } catch (error) {
+                            console.error('Error during frame capture:', error);
+                            generateAdButton.textContent = 'GENERATE AD';
+                            generateAdButton.disabled = false;
+                            alert(`Error capturing frames: ${error.message}`);
+                        }
+                    });
+                }
+
+                const displayAdBubbles = (descriptions) => {
+                    console.log('Displaying AD bubbles:', descriptions);
+                    const adMessages = sidebar.querySelector('#ad-messages');
+                    adMessages.innerHTML = '';
+                    
+                    // Get gender with fallback
+                    const genderButton = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                    const gender = genderButton ? genderButton.dataset.gender : 'female'; // Default to female if not found
+                    
+                    descriptions.forEach((desc, index) => {
+                        // Create container for message + speaker button
+                        const messageContainer = document.createElement('div');
+                        messageContainer.style.display = 'flex';
+                        messageContainer.style.alignItems = 'flex-start';
+                        messageContainer.style.gap = '8px';
+                        messageContainer.style.marginBottom = '12px';
+                        
+                        // Calculate timestamp range
+                        const currentTs = desc.timestamp;
+                        const nextTs = descriptions[index + 1]?.timestamp || video.duration;
+                        const tsRange = `${formatTime(currentTs)} - ${formatTime(nextTs)}`;
+                        
+                        // Create message bubble
+                        const bubble = document.createElement('div');
+                        bubble.className = 'chat-message bot-message';
+                        bubble.textContent = `[${tsRange}] ${desc.description}`;
+                        bubble.style.flex = '1';
+                        
+                        // Create speaker button
+                        const speakerBtn = document.createElement('button');
+                        speakerBtn.textContent = '🔊';
+                        speakerBtn.style.background = 'none';
+                        speakerBtn.style.border = 'none';
+                        speakerBtn.style.fontSize = '18px';
+                        speakerBtn.style.cursor = 'pointer';
+                        speakerBtn.style.padding = '0';
+                        speakerBtn.style.marginTop = '8px';
+                        speakerBtn.style.opacity = '0.5';
+                        speakerBtn.style.transition = 'opacity 0.2s';
+                        
+                        speakerBtn.addEventListener('mouseover', () => speakerBtn.style.opacity = '1');
+                        speakerBtn.addEventListener('mouseout', () => speakerBtn.style.opacity = '0.5');
+                        
+                        speakerBtn.addEventListener('click', (event) => {
+                            const thisButton = event.currentTarget;
+                            
+                            if (currentAudio && !currentAudio.paused && currentPlayingButton === thisButton) {
+                                currentAudio.pause();
+                                currentAudio = null;
+                                currentPlayingButton = null;
+                                thisButton.textContent = '🔊';
+                                return;
+                            }
+                            
+                            const textToSpeak = desc.description;
+                            
+                            if (textToSpeak) {
+                                chrome.runtime.sendMessage({
+                                    type: 'CALL_OPENAI_TTS',
+                                    text: textToSpeak,
+                                    gender: gender
+                                }, (ttsResponse) => {
+                                    if (ttsResponse && ttsResponse.success) {
+                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
+                                    } else {
+                                        console.error('OpenAI TTS error:', ttsResponse?.error);
+                                    }
+                                });
+                            }
+                        });
+                        
+                        messageContainer.appendChild(bubble);
+                        messageContainer.appendChild(speakerBtn);
+                        adMessages.appendChild(messageContainer);
+                    });
+                };
+
+                const formatTime = (seconds) => {
+                    const mins = Math.floor(seconds / 60);
+                    const secs = Math.floor(seconds % 60);
+                    return `${mins}:${secs.toString().padStart(2, '0')}`;
+                };
+
+                if (video) {
+                    video.addEventListener('timeupdate', () => {
+                        if (adSchedule.length > 0) {
+                            const currentTime = video.currentTime;
+                            const nextAd = adSchedule.find(ad => currentTime >= ad.timestamp && !ad.played);
+                            if (nextAd) {
+                                nextAd.played = true;
+                                // ALWAYS pause for AD playback
+                                console.log('[AD] Pausing video at', currentTime, 'for AD');
+                                video.pause();
+                                
+                                const genderBtnAD = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                const gender = genderBtnAD ? genderBtnAD.dataset.gender : 'female';
+                                chrome.runtime.sendMessage({
+                                    type: 'CALL_OPENAI_TTS',
+                                    text: nextAd.description,
+                                    gender: gender
+                                }, (ttsResponse) => {
+                                    if (ttsResponse && ttsResponse.success) {
+                                        const audio = playAudioFromDataUrl(ttsResponse.audioDataUrl, null);
+                                        if (audio) {
+                                            audio.onended = () => {
+                                                console.log('[AD] AD audio ended, resuming video');
+                                                video.play();
+                                            };
+                                        }
+                                    } else {
+                                        console.error('OpenAI TTS error:', ttsResponse?.error);
+                                        // Resume video on error
+                                        video.play();
+                                    }
+                                });
+                            }
+                        }
+                    });
+                }
+
                 // Prevent arrow keys from controlling video when sidebar is focused
                 sidebar.addEventListener('keydown', (e) => {
                     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -379,7 +675,6 @@
                 secondary.prepend(sidebar);
 
                 // Add timestamp functionality for CHAT tab
-                const video = document.querySelector('video.html5-main-video');
                 const vqaSendButton = sidebar.querySelector('#vqa-send-button');
 
                 document.addEventListener('visibilitychange', () => {
@@ -401,8 +696,8 @@
                     });
 
                     vqaSendButton.addEventListener('click', () => {
-                        const chatInput = sidebar.querySelector('.chat-input');
-                        const chatMessages = sidebar.querySelector('.chat-messages');
+                        const chatInput = sidebar.querySelector('#vqa-tab .chat-input');
+                        const chatMessages = sidebar.querySelector('#vqa-tab .chat-messages');
                         const question = chatInput.value.trim();
 
                         if (question) {
@@ -443,12 +738,13 @@
                                 }
 
                                 const textToSpeak = userMessage.textContent;
-                                const gender = sidebar.querySelector('#vqa-gender-group .pill-button.active').dataset.gender;
+                                const genderBtnUser = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                const genderUser = genderBtnUser ? genderBtnUser.dataset.gender : 'female';
                                 if (textToSpeak) {
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
                                         text: textToSpeak,
-                                        gender: gender
+                                        gender: genderUser
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
                                             playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
@@ -509,7 +805,8 @@
                                 }
 
                                 const textToSpeak = aiMessage.textContent;
-                                const gender = sidebar.querySelector('#vqa-gender-group .pill-button.active').dataset.gender;
+                                const genderBtnAI = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                const genderAI = genderBtnAI ? genderBtnAI.dataset.gender : 'female';
                                 if (textToSpeak && textToSpeak !== 'Thinking...') {
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
@@ -576,12 +873,15 @@ Please analyze the video frame shown and answer their question about what's happ
                                             speakerBtn.style.opacity = '1';
                                             
                                             // Auto-play voice response with VQA settings
+                                            const genderBtnResp = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                            const genderResp = genderBtnResp ? genderBtnResp.dataset.gender : 'female';
                                             chrome.runtime.sendMessage({
                                                 type: 'CALL_OPENAI_TTS',
-                                                text: response.text
+                                                text: response.text,
+                                                gender: genderResp
                                             }, (ttsResponse) => {
                                                 if (ttsResponse && ttsResponse.success) {
-                                                    playAudioFromDataUrl(ttsResponse.audioDataUrl);
+                                                    playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn);
                                                 } else {
                                                     console.error('OpenAI TTS error:', ttsResponse?.error);
                                                 }
