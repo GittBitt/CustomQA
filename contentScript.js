@@ -20,24 +20,69 @@
             return false;
         }
 
-        const playAudioFromDataUrl = (dataUrl) => {
+        let currentAudio = null;
+        let currentPlayingButton = null;
+
+        const playAudioFromDataUrl = (dataUrl, buttonElement) => {
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
+                if (currentPlayingButton) {
+                    currentPlayingButton.textContent = '🔊';
+                    currentPlayingButton = null;
+                }
+            }
+
             console.log('playAudioFromDataUrl called with dataUrl:', dataUrl.substring(0, 50) + '...');
             const audio = new Audio(dataUrl);
             audio.volume = currentVolume;
+            
+            const vqaSpeedSlider = document.getElementById('vqa-speed-slider');
+            if (vqaSpeedSlider) {
+                audio.playbackRate = parseFloat(vqaSpeedSlider.value) / 50;
+                console.log('Current playback speed:', audio.playbackRate);
+            } else {
+                console.log('VQA Speed Slider not found, defaulting to 1x speed.');
+                audio.playbackRate = 1;
+            }
+            
             console.log('Current volume:', currentVolume);
 
             audio.addEventListener('canplaythrough', () => {
                 console.log('Audio can play through.');
                 console.log('Calling audio.play()');
-                audio.play().catch(error => {
+                audio.play().then(() => {
+                    if (buttonElement) {
+                        buttonElement.textContent = '⏸️';
+                    }
+                }).catch(error => {
                     console.error('Audio playback failed:', error);
+                    if (buttonElement) {
+                        buttonElement.textContent = '🔊';
+                    }
                 });
             });
 
             audio.addEventListener('error', (e) => {
                 console.error('Audio element error:', e);
+                currentAudio = null;
+                currentPlayingButton = null;
+                if (buttonElement) {
+                    buttonElement.textContent = '🔊';
+                }
             });
 
+            audio.addEventListener('ended', () => {
+                console.log('Audio playback ended.');
+                currentAudio = null;
+                currentPlayingButton = null;
+                if (buttonElement) {
+                    buttonElement.textContent = '🔊';
+                }
+            });
+
+            currentAudio = audio;
+            currentPlayingButton = buttonElement;
             return audio;
         };
 
@@ -289,7 +334,17 @@
 
                 // Chat Text-to-speech
                 const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
-                chatSpeakerButton.addEventListener('click', () => {
+                chatSpeakerButton.addEventListener('click', (event) => {
+                    const thisButton = event.currentTarget;
+
+                    if (currentAudio && !currentAudio.paused && currentPlayingButton === thisButton) {
+                        currentAudio.pause();
+                        currentAudio = null;
+                        currentPlayingButton = null;
+                        thisButton.textContent = '🔊';
+                        return;
+                    }
+
                     console.log('Chat speaker button clicked.');
                     const chatInput = sidebar.querySelector('.chat-input');
                     const textToSpeak = chatInput.value;
@@ -300,7 +355,7 @@
                             text: textToSpeak
                         }, (ttsResponse) => {
                             if (ttsResponse && ttsResponse.success) {
-                                playAudioFromDataUrl(ttsResponse.audioDataUrl);
+                                playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
                             } else {
                                 console.error('OpenAI TTS error:', ttsResponse?.error);
                             }
@@ -324,6 +379,17 @@
                 // Add timestamp functionality for CHAT tab
                 const video = document.querySelector('video.html5-main-video');
                 const vqaSendButton = sidebar.querySelector('#vqa-send-button');
+
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'hidden' && currentAudio) {
+                        currentAudio.pause();
+                        currentAudio = null;
+                        if (currentPlayingButton) {
+                            currentPlayingButton.textContent = '🔊';
+                            currentPlayingButton = null;
+                        }
+                    }
+                });
 
                 if (video && vqaSendButton) {
                     video.addEventListener('timeupdate', () => {
@@ -363,7 +429,17 @@
                             userSpeakerBtn.addEventListener('mouseover', () => userSpeakerBtn.style.opacity = '1');
                             userSpeakerBtn.addEventListener('mouseout', () => userSpeakerBtn.style.opacity = '0.5');
                             
-                            userSpeakerBtn.addEventListener('click', () => {
+                            userSpeakerBtn.addEventListener('click', (event) => {
+                                const thisButton = event.currentTarget;
+
+                                if (currentAudio && !currentAudio.paused && currentPlayingButton === thisButton) {
+                                    currentAudio.pause();
+                                    currentAudio = null;
+                                    currentPlayingButton = null;
+                                    thisButton.textContent = '🔊';
+                                    return;
+                                }
+
                                 const textToSpeak = userMessage.textContent;
                                 if (textToSpeak) {
                                     chrome.runtime.sendMessage({
@@ -371,7 +447,7 @@
                                         text: textToSpeak
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
-                                            playAudioFromDataUrl(ttsResponse.audioDataUrl);
+                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
                                         } else {
                                             console.error('OpenAI TTS error:', ttsResponse?.error);
                                         }
@@ -417,7 +493,17 @@
                             speakerBtn.addEventListener('mouseover', () => speakerBtn.style.opacity = '1');
                             speakerBtn.addEventListener('mouseout', () => speakerBtn.style.opacity = '0.5');
                             
-                            speakerBtn.addEventListener('click', () => {
+                            speakerBtn.addEventListener('click', (event) => {
+                                const thisButton = event.currentTarget;
+
+                                if (currentAudio && !currentAudio.paused && currentPlayingButton === thisButton) {
+                                    currentAudio.pause();
+                                    currentAudio = null;
+                                    currentPlayingButton = null;
+                                    thisButton.textContent = '🔊';
+                                    return;
+                                }
+
                                 const textToSpeak = aiMessage.textContent;
                                 if (textToSpeak && textToSpeak !== 'Thinking...') {
                                     chrome.runtime.sendMessage({
@@ -425,7 +511,7 @@
                                         text: textToSpeak
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
-                                            playAudioFromDataUrl(ttsResponse.audioDataUrl);
+                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
                                         } else {
                                             console.error('OpenAI TTS error:', ttsResponse?.error);
                                         }
