@@ -676,6 +676,20 @@
 
                 // Add timestamp functionality for CHAT tab
                 const vqaSendButton = sidebar.querySelector('#vqa-send-button');
+                const timeWindowSlider = sidebar.querySelector('#time-window-slider');
+                const timeWindowValue = sidebar.querySelector('#time-window-value');
+
+                if (timeWindowSlider && timeWindowValue) {
+                    timeWindowSlider.addEventListener('input', (e) => {
+                        const value = e.target.value;
+                        if (value % 60 === 0) {
+                            const minutes = value / 60;
+                            timeWindowValue.textContent = `${minutes}min`;
+                        } else {
+                            timeWindowValue.textContent = `${value}s`;
+                        }
+                    });
+                }
 
                 document.addEventListener('visibilitychange', () => {
                     if (document.visibilityState === 'hidden' && currentAudio) {
@@ -829,23 +843,45 @@
                             // Scroll to the bottom of the chat
                             chatMessages.scrollTop = chatMessages.scrollHeight;
 
-                            const currentTime = video.currentTime;
-
                             const callGemini = async () => {
                                 try {
                                     const youtubeUrl = window.location.href;
                                     const currentTime = video.currentTime;
+                                    const timeWindow = parseInt(timeWindowSlider.value, 10);
 
-                                    // Capture video frame
-                                    console.log('Capturing video frame...');
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = video.videoWidth;
-                                    canvas.height = video.videoHeight;
-                                    const ctx = canvas.getContext('2d');
-                                    ctx.drawImage(video, 0, 0);
-                                    const frameData = canvas.toDataURL('image/jpeg').split(',')[1]; // Remove data URL prefix
+                                    const frames = [];
+                                    if (timeWindow > 0) {
+                                        aiMessage.textContent = `Capturing frames for ±${timeWindow}s...`;
+                                        const start = Math.max(0, currentTime - timeWindow);
+                                        const end = Math.min(video.duration, currentTime + timeWindow);
+                                        
+                                        // Capture one frame per second
+                                        for (let i = start; i <= end; i++) {
+                                            try {
+                                                console.log(`[VQA] Capturing frame at ${i}s`);
+                                                const frameData = await captureVideoFrame(i);
+                                                frames.push({
+                                                    timestamp: i,
+                                                    frameData: frameData
+                                                });
+                                            } catch (error) {
+                                                console.error(`[VQA] Failed to capture frame at ${i}s:`, error);
+                                            }
+                                        }
+                                        aiMessage.textContent = 'Thinking...';
+                                    } else {
+                                        // Capture only the current frame if timeWindow is 0
+                                        const frameData = await captureVideoFrame(currentTime);
+                                        frames.push({
+                                            timestamp: currentTime,
+                                            frameData: frameData
+                                        });
+                                    }
 
-                                    // Format timestamp
+                                    if (frames.length === 0) {
+                                        throw new Error("Could not capture any video frames.");
+                                    }
+
                                     const formatTime = (seconds) => {
                                         const mins = Math.floor(seconds / 60);
                                         const secs = Math.floor(seconds % 60);
@@ -858,21 +894,19 @@
                                     const prompt = `User is watching a YouTube video at timestamp ${formatTime(currentTime)}.
 User's question: "${question}"
 
-Please analyze the video frame shown and answer their question about what's happening in the video at this moment. Please answer in approximately ${wordCount} words.`;
+Please analyze the video frames provided and answer their question about what's happening in the video. The frames are captured around the given timestamp. Please answer in approximately ${wordCount} words.`;
 
-                                    console.log('Sending CALL_GEMINI message with video frame to background script');
-                                    // Send message to background script with the video frame
+                                    console.log('Sending CALL_GEMINI message with frames to background script');
                                     chrome.runtime.sendMessage({
-                                        type: 'CALL_GEMINI',
+                                        type: 'CALL_GEMINI_VQA_MULTIFRAME',
                                         prompt: prompt,
-                                        frameData: frameData
+                                        frames: frames
                                     }, (response) => {
                                         console.log('Received response from background:', response);
                                         if (response && response.success) {
                                             aiMessage.textContent = response.text;
                                             speakerBtn.style.opacity = '1';
                                             
-                                            // Auto-play voice response with VQA settings
                                             const genderBtnResp = sidebar.querySelector('#vqa-gender-group .pill-button.active');
                                             const genderResp = genderBtnResp ? genderBtnResp.dataset.gender : 'female';
                                             chrome.runtime.sendMessage({

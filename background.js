@@ -66,6 +66,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })();
     
     return true;
+  } else if (request.type === 'CALL_GEMINI_VQA_MULTIFRAME') {
+    console.log('[BG] Processing CALL_GEMINI_VQA_MULTIFRAME');
+    console.log('[BG] Frames received:', request.frames?.length);
+    
+    (async () => {
+      try {
+        const framesForGemini = request.frames && Array.isArray(request.frames) 
+          ? request.frames.map(f => ({
+              frameData: f.frameData,
+              timestamp: f.timestamp
+            }))
+          : [];
+        
+        console.log('[BG] Calling Gemini with', framesForGemini.length, 'frames');
+        const result = await callGeminiAPI(request.prompt, framesForGemini);
+        console.log('[BG] Sending success response', result?.substring?.(0, 100));
+        sendResponse({ success: true, text: result });
+      } catch (error) {
+        console.error('[BG] Error:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    
+    return true;
   } else if (request.type === 'CALL_OPENAI_TTS') {
     console.log('[BG] Processing CALL_OPENAI_TTS');
     
