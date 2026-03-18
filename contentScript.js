@@ -348,11 +348,13 @@
                     console.log('Chat speaker button clicked.');
                     const chatInput = sidebar.querySelector('.chat-input');
                     const textToSpeak = chatInput.value;
+                    const gender = sidebar.querySelector('#vqa-gender-group .pill-button.active').dataset.gender;
 
                     if (textToSpeak) {
                         chrome.runtime.sendMessage({
                             type: 'CALL_OPENAI_TTS',
-                            text: textToSpeak
+                            text: textToSpeak,
+                            gender: gender
                         }, (ttsResponse) => {
                             if (ttsResponse && ttsResponse.success) {
                                 playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
@@ -441,10 +443,12 @@
                                 }
 
                                 const textToSpeak = userMessage.textContent;
+                                const gender = sidebar.querySelector('#vqa-gender-group .pill-button.active').dataset.gender;
                                 if (textToSpeak) {
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
-                                        text: textToSpeak
+                                        text: textToSpeak,
+                                        gender: gender
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
                                             playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
@@ -505,10 +509,12 @@
                                 }
 
                                 const textToSpeak = aiMessage.textContent;
+                                const gender = sidebar.querySelector('#vqa-gender-group .pill-button.active').dataset.gender;
                                 if (textToSpeak && textToSpeak !== 'Thinking...') {
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
-                                        text: textToSpeak
+                                        text: textToSpeak,
+                                        gender: gender
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
                                             playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);

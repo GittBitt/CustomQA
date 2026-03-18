@@ -45,7 +45,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     (async () => {
       try {
-        const audioDataUrl = await callOpenAI_TTS_API(request.text);
+        const audioDataUrl = await callOpenAI_TTS_API(request.text, request.gender);
         sendResponse({ success: true, audioDataUrl: audioDataUrl });
       } catch (error) {
         console.error('[BG] Error:', error);
@@ -57,7 +57,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-async function callOpenAI_TTS_API(text) {
+async function callOpenAI_TTS_API(text, gender) {
   let apiKey = '';
   try {
     console.log('[OpenAI TTS] Fetching API key...');
@@ -68,7 +68,14 @@ async function callOpenAI_TTS_API(text) {
     apiKey = apiKeyLine ? apiKeyLine.trim().split('OPENAI_API_KEY=')[1].trim() : '';
     console.log(`[OpenAI TTS] Using API Key: ...${apiKey.slice(-4)}`);
     
-    console.log('[OpenAI TTS] Calling API with text:', text);
+    let voice = 'alloy'; // default
+    if (gender === 'female') {
+        voice = 'nova';
+    } else if (gender === 'male') {
+        voice = 'echo';
+    }
+
+    console.log(`[OpenAI TTS] Calling API with text: "${text}" and voice: "${voice}"`);
     const response = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
       headers: {
@@ -78,7 +85,7 @@ async function callOpenAI_TTS_API(text) {
       body: JSON.stringify({
         model: 'tts-1',
         input: text,
-        voice: 'alloy',
+        voice: voice,
       }),
     });
 
