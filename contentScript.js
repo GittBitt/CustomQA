@@ -20,6 +20,27 @@
             return false;
         }
 
+        const playAudioFromDataUrl = (dataUrl) => {
+            console.log('playAudioFromDataUrl called with dataUrl:', dataUrl.substring(0, 50) + '...');
+            const audio = new Audio(dataUrl);
+            audio.volume = currentVolume;
+            console.log('Current volume:', currentVolume);
+
+            audio.addEventListener('canplaythrough', () => {
+                console.log('Audio can play through.');
+                console.log('Calling audio.play()');
+                audio.play().catch(error => {
+                    console.error('Audio playback failed:', error);
+                });
+            });
+
+            audio.addEventListener('error', (e) => {
+                console.error('Audio element error:', e);
+            });
+
+            return audio;
+        };
+
         const sidebarExists = document.getElementById("custom-qa-sidebar");
 
         if (!sidebarExists) {
@@ -268,28 +289,22 @@
 
                 // Chat Text-to-speech
                 const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
-                let isChatInputSpeaking = false;
                 chatSpeakerButton.addEventListener('click', () => {
+                    console.log('Chat speaker button clicked.');
                     const chatInput = sidebar.querySelector('.chat-input');
                     const textToSpeak = chatInput.value;
 
-                    if (isChatInputSpeaking) {
-                        window.speechSynthesis.cancel();
-                        isChatInputSpeaking = false;
-                        chatSpeakerButton.textContent = '🔊';
-                    } else if (textToSpeak) {
-                        const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                        const speedSlider = sidebar.querySelector('#vqa-speed-slider');
-                        const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
-                        if (speedSlider) utterance.rate = speedSlider.value / 50;
-                        utterance.volume = currentVolume;
-                        utterance.onend = () => {
-                            isChatInputSpeaking = false;
-                            chatSpeakerButton.textContent = '🔊';
-                        };
-                        window.speechSynthesis.speak(utterance);
-                        isChatInputSpeaking = true;
-                        chatSpeakerButton.textContent = '⏸';
+                    if (textToSpeak) {
+                        chrome.runtime.sendMessage({
+                            type: 'CALL_OPENAI_TTS',
+                            text: textToSpeak
+                        }, (ttsResponse) => {
+                            if (ttsResponse && ttsResponse.success) {
+                                playAudioFromDataUrl(ttsResponse.audioDataUrl);
+                            } else {
+                                console.error('OpenAI TTS error:', ttsResponse?.error);
+                            }
+                        });
                     }
                 });
 
@@ -348,22 +363,19 @@
                             userSpeakerBtn.addEventListener('mouseover', () => userSpeakerBtn.style.opacity = '1');
                             userSpeakerBtn.addEventListener('mouseout', () => userSpeakerBtn.style.opacity = '0.5');
                             
-                            let isUserQuestionSpeaking = false;
                             userSpeakerBtn.addEventListener('click', () => {
-                                if (isUserQuestionSpeaking) {
-                                    window.speechSynthesis.cancel();
-                                    isUserQuestionSpeaking = false;
-                                    userSpeakerBtn.textContent = '🔊';
-                                } else {
-                                    if (speedSlider) utterance.rate = speedSlider.value / 50;
-                                    utterance.volume = currentVolume;
-                                    utterance.onend = () => {
-                                        isUserQuestionSpeaking = false;
-                                        userSpeakerBtn.textContent = '🔊';
-                                    };
-                                    window.speechSynthesis.speak(utterance);
-                                    isUserQuestionSpeaking = true;
-                                    userSpeakerBtn.textContent = '⏸';
+                                const textToSpeak = userMessage.textContent;
+                                if (textToSpeak) {
+                                    chrome.runtime.sendMessage({
+                                        type: 'CALL_OPENAI_TTS',
+                                        text: textToSpeak
+                                    }, (ttsResponse) => {
+                                        if (ttsResponse && ttsResponse.success) {
+                                            playAudioFromDataUrl(ttsResponse.audioDataUrl);
+                                        } else {
+                                            console.error('OpenAI TTS error:', ttsResponse?.error);
+                                        }
+                                    });
                                 }
                             });
 
@@ -405,25 +417,19 @@
                             speakerBtn.addEventListener('mouseover', () => speakerBtn.style.opacity = '1');
                             speakerBtn.addEventListener('mouseout', () => speakerBtn.style.opacity = '0.5');
                             
-                            let isAIMessageSpeaking = false;
                             speakerBtn.addEventListener('click', () => {
                                 const textToSpeak = aiMessage.textContent;
-                                if (isAIMessageSpeaking) {
-                                    window.speechSynthesis.cancel();
-                                    isAIMessageSpeaking = false;
-                                    speakerBtn.textContent = '🔊';
-                                } else if (textToSpeak && textToSpeak !== 'Thinking...') {
-                                    const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                                    const speedSlider = sidebar.querySelector('#vqa-speed-slider');
-                                    const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
-                                    if (speedSlider) utterance.rate = speedSlider.value / 50;
-                                                                                utterance.volume = currentVolume;                                    utterance.onend = () => {
-                                        isAIMessageSpeaking = false;
-                                        speakerBtn.textContent = '🔊';
-                                    };
-                                    window.speechSynthesis.speak(utterance);
-                                    isAIMessageSpeaking = true;
-                                    speakerBtn.textContent = '⏸';
+                                if (textToSpeak && textToSpeak !== 'Thinking...') {
+                                    chrome.runtime.sendMessage({
+                                        type: 'CALL_OPENAI_TTS',
+                                        text: textToSpeak
+                                    }, (ttsResponse) => {
+                                        if (ttsResponse && ttsResponse.success) {
+                                            playAudioFromDataUrl(ttsResponse.audioDataUrl);
+                                        } else {
+                                            console.error('OpenAI TTS error:', ttsResponse?.error);
+                                        }
+                                    });
                                 }
                             });
 
@@ -478,12 +484,16 @@ Please analyze the video frame shown and answer their question about what's happ
                                             speakerBtn.style.opacity = '1';
                                             
                                             // Auto-play voice response with VQA settings
-                                            const utterance = new SpeechSynthesisUtterance(response.text);
-                                            const speedSlider = sidebar.querySelector('#vqa-speed-slider');
-                                            const volumeSlider = sidebar.querySelector('#vqa-volume-slider');
-                                            if (speedSlider) utterance.rate = speedSlider.value / 50;
-                                    utterance.volume = currentVolume;
-                                            window.speechSynthesis.speak(utterance);
+                                            chrome.runtime.sendMessage({
+                                                type: 'CALL_OPENAI_TTS',
+                                                text: response.text
+                                            }, (ttsResponse) => {
+                                                if (ttsResponse && ttsResponse.success) {
+                                                    playAudioFromDataUrl(ttsResponse.audioDataUrl);
+                                                } else {
+                                                    console.error('OpenAI TTS error:', ttsResponse?.error);
+                                                }
+                                            });
                                         } else {
                                             aiMessage.textContent = `Error: ${response?.error || 'Unknown error occurred'}`;
                                             console.error('Gemini API error:', response?.error);

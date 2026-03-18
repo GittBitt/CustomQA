@@ -40,8 +40,75 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })();
     
     return true; // Keep the message channel open for async response
+  } else if (request.type === 'CALL_OPENAI_TTS') {
+    console.log('[BG] Processing CALL_OPENAI_TTS');
+    
+    (async () => {
+      try {
+        const audioDataUrl = await callOpenAI_TTS_API(request.text);
+        sendResponse({ success: true, audioDataUrl: audioDataUrl });
+      } catch (error) {
+        console.error('[BG] Error:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    
+    return true;
   }
 });
+
+async function callOpenAI_TTS_API(text) {
+  let apiKey = '';
+  try {
+    console.log('[OpenAI TTS] Fetching API key...');
+    const envResponse = await fetch(chrome.runtime.getURL('.env'));
+    const envText = await envResponse.text();
+    const lines = envText.split('\n');
+    const apiKeyLine = lines.find(line => line.trim().startsWith('OPENAI_API_KEY='));
+    apiKey = apiKeyLine ? apiKeyLine.trim().split('OPENAI_API_KEY=')[1].trim() : '';
+    console.log(`[OpenAI TTS] Using API Key: ...${apiKey.slice(-4)}`);
+    
+    console.log('[OpenAI TTS] Calling API with text:', text);
+    const response = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'tts-1',
+        input: text,
+        voice: 'alloy',
+      }),
+    });
+
+    console.log('[OpenAI TTS] API response status:', response.status);
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('[OpenAI TTS] API error:', errorData);
+      throw new Error(`OpenAI API error: ${errorData.error.message}`);
+    }
+
+    const audioBlob = await response.blob();
+    console.log('[OpenAI TTS] Received audio blob, size:', audioBlob.size);
+    const reader = new FileReader();
+    return new Promise((resolve, reject) => {
+      reader.onloadend = () => {
+        console.log('[OpenAI TTS] Successfully created data URL.');
+        resolve(reader.result);
+      };
+      reader.onerror = (error) => {
+        console.error('[OpenAI TTS] FileReader error:', error);
+        reject(error);
+      };
+      reader.readAsDataURL(audioBlob);
+    });
+  } catch (error) {
+    console.error("[API] Error calling OpenAI TTS API:", error.message);
+    throw new Error(`[API] Error calling OpenAI TTS API: ${error.message}.`);
+  }
+}
 
 async function callGeminiAPI(prompt, frameData) {
   let apiKey = '';
@@ -50,9 +117,11 @@ async function callGeminiAPI(prompt, frameData) {
     const envResponse = await fetch(chrome.runtime.getURL('.env'));
     console.log('[API] 2');
     const envText = await envResponse.text();
-    console.log('[API] 3');
-    const apiKey = envText.split('API_KEY=')[1].trim();
-    console.log(`[API] Using API Key: ${apiKey}`);
+    console.log('[Gemini API] Raw .env content:', envText); // Log raw content for debugging
+    const lines = envText.split('\n');
+    const apiKeyLine = lines.find(line => line.trim().startsWith('API_KEY='));
+    const apiKey = apiKeyLine ? apiKeyLine.trim().split('API_KEY=')[1].trim() : '';
+    console.log(`[Gemini API] Using API Key: ...${apiKey.slice(-4)}`);
     const model = "gemini-2.5-flash"; // Use current 2.5 Flash model
     
     console.log('[API] API Key loaded, making request to Gemini');
