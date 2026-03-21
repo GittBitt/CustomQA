@@ -566,8 +566,12 @@
                         // Create message bubble
                         const bubble = document.createElement('div');
                         bubble.className = 'chat-message bot-message';
-                        bubble.textContent = `[${tsRange}] ${desc.description}`;
                         bubble.style.flex = '1';
+
+                        const textSpan = document.createElement('span');
+                        textSpan.tabIndex = 0;
+                        textSpan.textContent = `[${tsRange}] ${desc.description}`;
+                        bubble.appendChild(textSpan);
                         
                         // Create speaker button
                         const speakerBtn = document.createElement('button');
@@ -751,7 +755,7 @@
                                     return;
                                 }
 
-                                const textToSpeak = userMessage.textContent;
+                                const textToSpeak = userTextSpan.textContent;
                                 const genderBtnUser = sidebar.querySelector('#vqa-gender-group .pill-button.active');
                                 const genderUser = genderBtnUser ? genderBtnUser.dataset.gender : 'female';
                                 if (textToSpeak) {
@@ -771,8 +775,12 @@
 
                             const userMessage = document.createElement('div');
                             userMessage.className = 'chat-message user-message';
-                            userMessage.textContent = question;
                             userMessage.style.flex = '1';
+
+                            const userTextSpan = document.createElement('span');
+                            userTextSpan.tabIndex = 0;
+                            userTextSpan.textContent = question;
+                            userMessage.appendChild(userTextSpan);
 
                             userMessageContainer.appendChild(userSpeakerBtn);
                             userMessageContainer.appendChild(userMessage);
@@ -790,8 +798,12 @@
 
                             const aiMessage = document.createElement('div');
                             aiMessage.className = 'chat-message bot-message';
-                            aiMessage.textContent = 'Thinking...';
                             aiMessage.style.flex = '1';
+
+                            const aiTextSpan = document.createElement('span');
+                            aiTextSpan.tabIndex = 0;
+                            aiTextSpan.textContent = 'Thinking...';
+                            aiMessage.appendChild(aiTextSpan);
 
                             const speakerBtn = document.createElement('button');
                             speakerBtn.textContent = '🔊';
@@ -818,7 +830,7 @@
                                     return;
                                 }
 
-                                const textToSpeak = aiMessage.textContent;
+                                const textToSpeak = aiTextSpan.textContent;
                                 const genderBtnAI = sidebar.querySelector('#vqa-gender-group .pill-button.active');
                                 const genderAI = genderBtnAI ? genderBtnAI.dataset.gender : 'female';
                                 if (textToSpeak && textToSpeak !== 'Thinking...') {
@@ -851,7 +863,7 @@
 
                                     const frames = [];
                                     if (timeWindow > 0) {
-                                        aiMessage.textContent = `Capturing frames for ±${timeWindow}s...`;
+                                        aiTextSpan.textContent = `Capturing frames for ±${timeWindow}s...`;
                                         const start = Math.max(0, currentTime - timeWindow);
                                         const end = Math.min(video.duration, currentTime + timeWindow);
                                         
@@ -868,7 +880,7 @@
                                                 console.error(`[VQA] Failed to capture frame at ${i}s:`, error);
                                             }
                                         }
-                                        aiMessage.textContent = 'Thinking...';
+                                        aiTextSpan.textContent = 'Thinking...';
                                     } else {
                                         // Capture only the current frame if timeWindow is 0
                                         const frameData = await captureVideoFrame(currentTime);
@@ -904,7 +916,7 @@ Please analyze the video frames provided and answer their question about what's 
                                     }, (response) => {
                                         console.log('Received response from background:', response);
                                         if (response && response.success) {
-                                            aiMessage.textContent = response.text;
+                                            aiTextSpan.textContent = response.text;
                                             speakerBtn.style.opacity = '1';
                                             
                                             const genderBtnResp = sidebar.querySelector('#vqa-gender-group .pill-button.active');
@@ -921,15 +933,14 @@ Please analyze the video frames provided and answer their question about what's 
                                                 }
                                             });
                                         } else {
-                                            aiMessage.textContent = `Error: ${response?.error || 'Unknown error occurred'}`;
+                                            aiTextSpan.textContent = `Error: ${response?.error || 'Unknown error occurred'}`;
                                             console.error('Gemini API error:', response?.error);
                                         }
                                     });
-                                } catch (error) {
-                                    console.error("Error calling Gemini API:", error);
-                                    aiMessage.textContent = `Error: ${error.message}`;
-                                }
-                            };
+                                                                } catch (error) {
+                                                                    console.error("Error calling Gemini API:", error);
+                                                                    aiTextSpan.textContent = `Error: ${error.message}`;
+                                                                }                            };
 
                             callGemini();
                         }

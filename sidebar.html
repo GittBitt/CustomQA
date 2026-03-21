@@ -8,15 +8,15 @@
     </div>
     <div class="sidebar-header-actions">
             <div class="button-group">
-                <button class="vqa-badge">VQA <span>❓</span></button>
-                <button class="settings-icon">⚙️</button>
+                <button class="vqa-badge" aria-label="Visual Question Answer">VQA <span>❓</span></button>
+                <button class="settings-icon" aria-label="Settings">⚙️</button>
             </div>
     </div>
 </div>
 
 <div class="tab-container">
-    <button class="tab-button active" data-tab="audio-descriptions">Audio Descriptions</button>
-    <button class="tab-button" data-tab="vqa">Visual Question Answer</button>
+    <button class="tab-button active" data-tab="audio-descriptions" aria-label="Audio Descriptions Tab">Audio Descriptions</button>
+    <button class="tab-button" data-tab="vqa" aria-label="Visual Question Answer Tab">Visual Question Answer</button>
 </div>
 
 <div class="tab-content" id="audio-descriptions-tab">
@@ -26,7 +26,7 @@
             <div class="chat-messages" id="ad-messages" tabindex="0" aria-label="Audio Descriptions"></div>
         </div>
     </div>
-    <button class="save-button" id="generate-ad-button">GENERATE AD</button>
+    <button class="save-button" id="generate-ad-button" aria-label="Generate Audio Description">GENERATE AD</button>
     <div class="divider"></div>
     <div class="section">
         <div class="section-title">PRESENTATION CUSTOMIZATION</div>
@@ -44,16 +44,16 @@
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Voice</div>
             <div class="button-group">
-                <button class="pill-button active" data-voice="human">HUMAN</button>
+                <button class="pill-button active" data-voice="human" aria-label="Human Voice">HUMAN</button>
             </div>
         </div>
         
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Gender</div>
             <div class="button-group">
-                <button class="pill-button active" data-gender="female">FEMALE</button>
-                <button class="pill-button" data-gender="male">MALE</button>
-                <button class="pill-button" data-gender="androgynous">ANDROGYNOUS</button>
+                <button class="pill-button active" data-gender="female" aria-label="Female Voice">FEMALE</button>
+                <button class="pill-button" data-gender="male" aria-label="Male Voice">MALE</button>
+                <button class="pill-button" data-gender="androgynous" aria-label="Androgynous Voice">ANDROGYNOUS</button>
             </div>
         </div>
     </div>
@@ -71,36 +71,36 @@
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Frequency:</div>
             <div class="button-group">
-                <button class="pill-button" data-frequency="rarely">RARELY</button>
-                <button class="pill-button active" data-frequency="sometimes">SOMETIMES</button>
-                <button class="pill-button" data-frequency="often">OFTEN</button>
-                <button class="pill-button" data-frequency="very">VERY</button>
+                <button class="pill-button" data-frequency="rarely" aria-label="Rarely">RARELY</button>
+                <button class="pill-button active" data-frequency="sometimes" aria-label="Sometimes">SOMETIMES</button>
+                <button class="pill-button" data-frequency="often" aria-label="Often">OFTEN</button>
+                <button class="pill-button" data-frequency="very" aria-label="Very Often">VERY</button>
             </div>
         </div>
         
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Emphasis (multiple choice):</div>
             <div class="button-group">
-                <button class="pill-button active" data-emphasis="balanced">BALANCED</button>
-                <button class="pill-button" data-emphasis="character">CHARACTER</button>
-                <button class="pill-button" data-emphasis="environment">ENVIRONMENT</button>
-                <button class="pill-button" data-emphasis="instructional">INSTRUCTIONAL</button>
+                <button class="pill-button active" data-emphasis="balanced" aria-label="Balanced Emphasis">BALANCED</button>
+                <button class="pill-button" data-emphasis="character" aria-label="Character Emphasis">CHARACTER</button>
+                <button class="pill-button" data-emphasis="environment" aria-label="Environment Emphasis">ENVIRONMENT</button>
+                <button class="pill-button" data-emphasis="instructional" aria-label="Instructional Emphasis">INSTRUCTIONAL</button>
             </div>
         </div>
 
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Color Descriptions:</div>
             <div class="button-group">
-                <button class="pill-button active" data-color="on">ON</button>
-                <button class="pill-button" data-color="off">OFF</button>
+                <button class="pill-button active" data-color="on" aria-label="Color Descriptions On">ON</button>
+                <button class="pill-button" data-color="off" aria-label="Color Descriptions Off">OFF</button>
             </div>
         </div>
         
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Narration Style:</div>
             <div class="button-group">
-                <button class="pill-button active" data-narration="objective">OBJECTIVE</button>
-                <button class="pill-button" data-narration="subjective">SUBJECTIVE</button>
+                <button class="pill-button active" data-narration="objective" aria-label="Objective Narration">OBJECTIVE</button>
+                <button class="pill-button" data-narration="subjective" aria-label="Subjective Narration">SUBJECTIVE</button>
             </div>
         </div>
     </div>
@@ -113,24 +113,24 @@
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Audio Description:</div>
             <div class="button-group">
-                <button class="pill-button active">ON</button>
-                <button class="pill-button">OFF</button>
+                <button class="pill-button active" aria-label="Audio Description On">ON</button>
+                <button class="pill-button" aria-label="Audio Description Off">OFF</button>
             </div>
         </div>
         
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Pause During AD:</div>
             <div class="button-group" id="pause-ad-group">
-                <button class="pill-button active" data-action="pause-on">ON</button>
-                <button class="pill-button" data-action="pause-off">OFF</button>
+                <button class="pill-button active" data-action="pause-on" aria-label="Pause During Audio Description On">ON</button>
+                <button class="pill-button" data-action="pause-off" aria-label="Pause During Audio Description Off">OFF</button>
             </div>
         </div>
 
         <div id="audio-ducking-section" style="display: none; margin-bottom: 16px;">
             <div class="subsection-title">Audio Ducking:</div>
             <div class="button-group">
-                <button class="pill-button">ON</button>
-                <button class="pill-button">OFF</button>
+                <button class="pill-button" aria-label="Audio Ducking On">ON</button>
+                <button class="pill-button" aria-label="Audio Ducking Off">OFF</button>
             </div>
         </div>
     </div>
@@ -140,7 +140,7 @@
 
     <div class="slider-container">
         <div class="slider-label">Time Window: <span id="time-window-value">2</span>s</div>
-        <input type="range" min="0" max="600" value="2" class="slider" id="time-window-slider" aria-label="Time Window">
+        <input type="range" min="0" max="100" value="2" class="slider" id="time-window-slider" aria-label="Time Window">
     </div>
 
     <div class="vqa-sub-tab-content" id="chat-tab" style="display: block;">
@@ -148,11 +148,11 @@
             <div class="chat-messages" tabindex="0" aria-label="Visual Question and Answer Chat"></div>
             <div class="chat-input-container">
                 <textarea class="chat-input" placeholder="Type your message..."></textarea>
-                <button id="chat-mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🎤</button>
-                <button id="chat-speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;">🔊</button>
+                <button id="chat-mic-button" style="background: none; border: none; font-size: 24px; cursor: pointer;" aria-label="Use Microphone">🎤</button>
+                <button id="chat-speaker-button" style="background: none; border: none; font-size: 24px; cursor: pointer;" aria-label="Enable Speaker">🔊</button>
             </div>
         </div>
-        <button id="vqa-send-button" class="save-button" style="margin-top: 16px; padding: 12px 20px;">Ask question at 0:00</button>
+        <button id="vqa-send-button" class="save-button" style="margin-top: 16px; padding: 12px 20px;" aria-label="Ask question at 0:00">Ask question at 0:00</button>
     </div>
 
     <div class="divider"></div>
@@ -173,16 +173,16 @@
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Voice</div>
             <div class="button-group" id="vqa-voice-group">
-                <button class="pill-button active" data-voice="human">HUMAN</button>
+                <button class="pill-button active" data-voice="human" aria-label="Human Voice">HUMAN</button>
             </div>
         </div>
         
         <div style="margin-bottom: 16px;">
             <div class="subsection-title">Gender</div>
             <div class="button-group" id="vqa-gender-group">
-                <button class="pill-button" data-gender="female">FEMALE</button>
-                <button class="pill-button" data-gender="male">MALE</button>
-                <button class="pill-button" data-gender="androgynous">ANDROGYNOUS</button>
+                <button class="pill-button" data-gender="female" aria-label="Female Voice">FEMALE</button>
+                <button class="pill-button" data-gender="male" aria-label="Male Voice">MALE</button>
+                <button class="pill-button" data-gender="androgynous" aria-label="Androgynous Voice">ANDROGYNOUS</button>
             </div>
         </div>
         
@@ -200,6 +200,6 @@
     </div>
     
     <div class="section">
-        <button class="save-button">SAVE CHANGES</button>
+        <button class="save-button" aria-label="Save Changes">SAVE CHANGES</button>
     </div>
 </div>
