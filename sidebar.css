@@ -55,7 +55,7 @@
     color: #fff;
     padding: 6px 16px; /* Slightly slimmer */
     border-radius: 20px;
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 500;
     display: flex;
     align-items: center;
@@ -216,6 +216,18 @@
     border: none;
 }
 
+.slider-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.slider-wrapper svg {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
 .divider {
     height: 1px;
     background: #ddd;
@@ -265,6 +277,7 @@
     border-radius: 18px;
     max-width: 80%;
     word-wrap: break-word;
+    font-size: 15px;
 }
 
 .user-message {
@@ -283,6 +296,7 @@
     display: flex;
     padding: 8px;
     border-top: 1px solid #ccc;
+    gap: 8px; /* Added gap for spacing between elements */
 }
 
 .chat-input {
@@ -290,7 +304,7 @@
     border: none;
     resize: none;
     padding: 8px;
-    font-size: 14px;
+    font-size: 16px;
     outline: none;
 }
 

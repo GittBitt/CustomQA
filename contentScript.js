@@ -1,6 +1,21 @@
 (() => {
     let currentVolume = 1; // Default volume
 
+    const speakerSvg = `<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"/><path d="M3 9v6h4l5 5V4L7 9zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77"/></svg>`;
+    const pauseSvg = `<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"/><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+
+    const setButtonToSpeakerIcon = (buttonElement) => {
+        if (buttonElement) {
+            buttonElement.innerHTML = speakerSvg;
+        }
+    };
+
+    const setButtonToPauseIcon = (buttonElement) => {
+        if (buttonElement) {
+            buttonElement.innerHTML = pauseSvg;
+        }
+    };
+
     // Load initial volume from storage
     chrome.storage.sync.get('volume', (data) => {
         if (data.volume) {
@@ -29,7 +44,7 @@
                 currentAudio.pause();
                 currentAudio = null;
                 if (currentPlayingButton) {
-                    currentPlayingButton.textContent = '🔊';
+                    setButtonToSpeakerIcon(currentPlayingButton);
                     currentPlayingButton = null;
                 }
             }
@@ -58,12 +73,12 @@
                 console.log('Calling audio.play()');
                 audio.play().then(() => {
                     if (buttonElement) {
-                        buttonElement.textContent = '⏸️';
+                        setButtonToPauseIcon(buttonElement);
                     }
                 }).catch(error => {
                     console.error('Audio playback failed:', error);
                     if (buttonElement) {
-                        buttonElement.textContent = '🔊';
+                        setButtonToSpeakerIcon(buttonElement);
                     }
                 });
             });
@@ -73,7 +88,7 @@
                 currentAudio = null;
                 currentPlayingButton = null;
                 if (buttonElement) {
-                    buttonElement.textContent = '🔊';
+                    setButtonToSpeakerIcon(buttonElement);
                 }
             });
 
@@ -82,7 +97,7 @@
                 currentAudio = null;
                 currentPlayingButton = null;
                 if (buttonElement) {
-                    buttonElement.textContent = '🔊';
+                    setButtonToSpeakerIcon(buttonElement);
                 }
             });
 
@@ -284,6 +299,12 @@
                         } else {
                             e.target.classList.toggle('active');
                         }
+
+                        if (e.target.dataset.gender) {
+                            const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                            const otherTab = sidebar.querySelector('.tab-content[style*="display: none"]');
+                            syncPresentationSettings(activeTab, otherTab);
+                        }
                     }
                 });
 
@@ -367,14 +388,14 @@
                         currentAudio.pause();
                         currentAudio = null;
                         currentPlayingButton = null;
-                        thisButton.textContent = '🔊';
+                        setButtonToSpeakerIcon(thisButton);
                         return;
                     }
 
                     console.log('Chat speaker button clicked.');
                     const chatInput = sidebar.querySelector('.chat-input');
                     const textToSpeak = chatInput.value;
-                    const genderBtn = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                    const genderBtn = sidebar.querySelector('.pill-button[data-gender].active');
                     const gender = genderBtn ? genderBtn.dataset.gender : 'female';
 
                     if (textToSpeak) {
@@ -547,7 +568,7 @@
                     adMessages.innerHTML = '';
                     
                     // Get gender with fallback
-                    const genderButton = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                    const genderButton = sidebar.querySelector('.pill-button[data-gender].active');
                     const gender = genderButton ? genderButton.dataset.gender : 'female'; // Default to female if not found
                     
                     descriptions.forEach((desc, index) => {
@@ -575,7 +596,7 @@
                         
                         // Create speaker button
                         const speakerBtn = document.createElement('button');
-                        speakerBtn.textContent = '🔊';
+                        setButtonToSpeakerIcon(speakerBtn);
                         speakerBtn.style.background = 'none';
                         speakerBtn.style.border = 'none';
                         speakerBtn.style.fontSize = '18px';
@@ -595,7 +616,7 @@
                                 currentAudio.pause();
                                 currentAudio = null;
                                 currentPlayingButton = null;
-                                thisButton.textContent = '🔊';
+                                setButtonToSpeakerIcon(thisButton);
                                 return;
                             }
                             
@@ -639,7 +660,7 @@
                                 console.log('[AD] Pausing video at', currentTime, 'for AD');
                                 video.pause();
                                 
-                                const genderBtnAD = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                const genderBtnAD = sidebar.querySelector('.pill-button[data-gender].active');
                                 const gender = genderBtnAD ? genderBtnAD.dataset.gender : 'female';
                                 chrome.runtime.sendMessage({
                                     type: 'CALL_OPENAI_TTS',
@@ -700,7 +721,7 @@
                         currentAudio.pause();
                         currentAudio = null;
                         if (currentPlayingButton) {
-                            currentPlayingButton.textContent = '🔊';
+                            setButtonToSpeakerIcon(currentPlayingButton);
                             currentPlayingButton = null;
                         }
                     }
@@ -731,7 +752,7 @@
                             userMessageContainer.style.justifyContent = 'flex-end';
 
                             const userSpeakerBtn = document.createElement('button');
-                            userSpeakerBtn.textContent = '🔊';
+                            setButtonToSpeakerIcon(userSpeakerBtn);
                             userSpeakerBtn.style.background = 'none';
                             userSpeakerBtn.style.border = 'none';
                             userSpeakerBtn.style.fontSize = '18px';
@@ -751,12 +772,10 @@
                                     currentAudio.pause();
                                     currentAudio = null;
                                     currentPlayingButton = null;
-                                    thisButton.textContent = '🔊';
+                                    setButtonToSpeakerIcon(thisButton);
                                     return;
                                 }
-
-                                const textToSpeak = userTextSpan.textContent;
-                                const genderBtnUser = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                const genderBtnUser = sidebar.querySelector('.pill-button[data-gender].active');
                                 const genderUser = genderBtnUser ? genderBtnUser.dataset.gender : 'female';
                                 if (textToSpeak) {
                                     chrome.runtime.sendMessage({
@@ -806,7 +825,7 @@
                             aiMessage.appendChild(aiTextSpan);
 
                             const speakerBtn = document.createElement('button');
-                            speakerBtn.textContent = '🔊';
+                            setButtonToSpeakerIcon(speakerBtn);
                             speakerBtn.style.background = 'none';
                             speakerBtn.style.border = 'none';
                             speakerBtn.style.fontSize = '18px';
@@ -826,18 +845,18 @@
                                     currentAudio.pause();
                                     currentAudio = null;
                                     currentPlayingButton = null;
-                                    thisButton.textContent = '🔊';
+                                    setButtonToSpeakerIcon(thisButton);
                                     return;
                                 }
 
                                 const textToSpeak = aiTextSpan.textContent;
-                                const genderBtnAI = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                const genderBtnAI = sidebar.querySelector('.pill-button[data-gender].active');
                                 const genderAI = genderBtnAI ? genderBtnAI.dataset.gender : 'female';
                                 if (textToSpeak && textToSpeak !== 'Thinking...') {
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
                                         text: textToSpeak,
-                                        gender: gender
+                                        gender: genderAI
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
                                             playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
@@ -919,7 +938,7 @@ Please analyze the video frames provided and answer their question about what's 
                                             aiTextSpan.textContent = response.text;
                                             speakerBtn.style.opacity = '1';
                                             
-                                            const genderBtnResp = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                            const genderBtnResp = sidebar.querySelector('.pill-button[data-gender].active');
                                             const genderResp = genderBtnResp ? genderBtnResp.dataset.gender : 'female';
                                             chrome.runtime.sendMessage({
                                                 type: 'CALL_OPENAI_TTS',
