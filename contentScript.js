@@ -1,4 +1,8 @@
 (() => {
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const gainNode = audioContext.createGain();
+    gainNode.connect(audioContext.destination);
+
     let currentVolume = 1; // Default volume
 
     const speakerSvg = `<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"/><path d="M3 9v6h4l5 5V4L7 9zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77"/></svg>`;
@@ -39,9 +43,13 @@
         let currentAudio = null;
         let currentPlayingButton = null;
 
-        const playAudioFromDataUrl = (dataUrl, buttonElement) => {
+        const playAudioFromDataUrl = async (dataUrl, buttonElement, onendedCallback = null) => {
             if (currentAudio) {
-                currentAudio.pause();
+                try {
+                    currentAudio.stop();
+                } catch (e) {
+                    // Ignore error if audio is already stopped
+                }
                 currentAudio = null;
                 if (currentPlayingButton) {
                     setButtonToSpeakerIcon(currentPlayingButton);
@@ -49,61 +57,51 @@
                 }
             }
 
-            console.log('playAudioFromDataUrl called with dataUrl:', dataUrl.substring(0, 50) + '...');
-            const audio = new Audio(dataUrl);
-            audio.volume = currentVolume;
-            
-            // Get speed from whichever slider is available (AD or VQA)
-            const adSpeedSlider = document.getElementById('ad-speed-slider');
-            const vqaSpeedSlider = document.getElementById('vqa-speed-slider');
-            const speedSlider = adSpeedSlider || vqaSpeedSlider;
-            
-            if (speedSlider) {
-                audio.playbackRate = parseFloat(speedSlider.value) / 50;
-                console.log('Current playback speed:', audio.playbackRate);
-            } else {
-                console.log('Speed Slider not found, defaulting to 1x speed.');
-                audio.playbackRate = 1;
-            }
-            
-            console.log('Current volume:', currentVolume);
+            try {
+                const response = await fetch(dataUrl);
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-            audio.addEventListener('canplaythrough', () => {
-                console.log('Audio can play through.');
-                console.log('Calling audio.play()');
-                audio.play().then(() => {
-                    if (buttonElement) {
-                        setButtonToPauseIcon(buttonElement);
-                    }
-                }).catch(error => {
-                    console.error('Audio playback failed:', error);
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(gainNode);
+
+                gainNode.gain.value = currentVolume;
+
+                const speedSlider = document.getElementById('ad-speed-slider') || document.getElementById('vqa-speed-slider');
+                if (speedSlider) {
+                    source.playbackRate.value = parseFloat(speedSlider.value) / 50;
+                }
+
+                source.onended = () => {
+                    console.log('Audio playback ended.');
+                    currentAudio = null;
+                    currentPlayingButton = null;
                     if (buttonElement) {
                         setButtonToSpeakerIcon(buttonElement);
                     }
-                });
-            });
+                    if (onendedCallback) {
+                        onendedCallback();
+                    }
+                };
 
-            audio.addEventListener('error', (e) => {
-                console.error('Audio element error:', e);
-                currentAudio = null;
-                currentPlayingButton = null;
+                source.start(0);
+
+                if (buttonElement) {
+                    setButtonToPauseIcon(buttonElement);
+                }
+
+                currentAudio = source;
+                currentPlayingButton = buttonElement;
+                return source;
+
+            } catch (error) {
+                console.error('Error playing audio with Web Audio API:', error);
                 if (buttonElement) {
                     setButtonToSpeakerIcon(buttonElement);
                 }
-            });
-
-            audio.addEventListener('ended', () => {
-                console.log('Audio playback ended.');
-                currentAudio = null;
-                currentPlayingButton = null;
-                if (buttonElement) {
-                    setButtonToSpeakerIcon(buttonElement);
-                }
-            });
-
-            currentAudio = audio;
-            currentPlayingButton = buttonElement;
-            return audio;
+                return null;
+            }
         };
 
         const sidebarExists = document.getElementById("custom-qa-sidebar");
@@ -153,8 +151,14 @@
                 const vqaVolumeSlider = sidebar.querySelector('#vqa-volume-slider');
 
                 const setSliderValues = (volume) => {
-                    if (adVolumeSlider) adVolumeSlider.value = volume;
-                    if (vqaVolumeSlider) vqaVolumeSlider.value = volume;
+                    if (adVolumeSlider) {
+                        adVolumeSlider.value = volume;
+                        adVolumeSlider.setAttribute('aria-valuetext', `${volume}%`);
+                    }
+                    if (vqaVolumeSlider) {
+                        vqaVolumeSlider.value = volume;
+                        vqaVolumeSlider.setAttribute('aria-valuetext', `${volume}%`);
+                    }
                 };
 
                 chrome.storage.sync.get('volume', (data) => {
@@ -218,8 +222,12 @@
                         const currentActiveTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
 
                         // Update active tab button
-                        tabButtons.forEach(btn => btn.classList.remove('active'));
+                        tabButtons.forEach(btn => {
+                            btn.classList.remove('active');
+                            btn.setAttribute('aria-selected', 'false');
+                        });
                         button.classList.add('active');
+                        button.setAttribute('aria-selected', 'true');
 
                         // Show corresponding content
                         tabContents.forEach(content => {
@@ -227,6 +235,7 @@
                         });
                         const newActiveTab = sidebar.querySelector(`#${tabName}-tab`);
                         newActiveTab.style.display = 'block';
+                        newActiveTab.focus(); // Focus the new tab panel for screen readers
 
                         // Sync settings
                         if (currentActiveTab && newActiveTab) {
@@ -246,10 +255,12 @@
                     if (lengthSlider && lengthValue) {
                         lengthSlider.value = newValue;
                         lengthValue.textContent = newValue;
+                        lengthSlider.setAttribute('aria-valuetext', `${newValue} words`);
                     }
                     if (vqaLengthSlider && vqaLengthValue) {
                         vqaLengthSlider.value = newValue;
                         vqaLengthValue.textContent = newValue;
+                        vqaLengthSlider.setAttribute('aria-valuetext', `${newValue} words`);
                     }
                 };
 
@@ -270,8 +281,14 @@
 
                 const syncSpeedSliders = (sourceSlider) => {
                     const newValue = sourceSlider.value;
-                    if (adSpeedSlider) adSpeedSlider.value = newValue;
-                    if (vqaSpeedSlider) vqaSpeedSlider.value = newValue;
+                    if (adSpeedSlider) {
+                        adSpeedSlider.value = newValue;
+                        adSpeedSlider.setAttribute('aria-valuetext', `${newValue}%`);
+                    }
+                    if (vqaSpeedSlider) {
+                        vqaSpeedSlider.value = newValue;
+                        vqaSpeedSlider.setAttribute('aria-valuetext', `${newValue}%`);
+                    }
                 };
 
                 if (adSpeedSlider) {
@@ -441,13 +458,27 @@
                     });
                 };
 
+                let isAdGenerationRunning = false;
+                let cancelAdGeneration = false;
                 const generateAdButton = sidebar.querySelector('#generate-ad-button');
                 if (generateAdButton) {
                     generateAdButton.addEventListener('click', async () => {
+                        if (isAdGenerationRunning) {
+                            cancelAdGeneration = true;
+                            generateAdButton.textContent = 'Cancelling...';
+                            generateAdButton.disabled = true;
+                            return;
+                        }
+
                         if (!video) {
                             console.error('Video element not found.');
                             return;
                         }
+
+                        isAdGenerationRunning = true;
+                        cancelAdGeneration = false;
+                        generateAdButton.textContent = 'Capturing frames... (Click to cancel)';
+                        generateAdButton.disabled = false;
                         
                         const duration = video.duration;
                         const frequency = sidebar.querySelector('.pill-button[data-frequency].active')?.dataset.frequency || 'sometimes';
@@ -476,12 +507,13 @@
                         }
 
                         console.log('[AD] Capturing frames at timestamps:', timestamps);
-                        generateAdButton.textContent = 'Capturing frames...';
-                        generateAdButton.disabled = true;
 
                         try {
                             const frames = [];
                             for (const timestamp of timestamps) {
+                                if (cancelAdGeneration) {
+                                    throw new Error('Cancelled by user');
+                                }
                                 try {
                                     console.log(`[AD] Capturing frame at ${timestamp}s`);
                                     const frameData = await captureVideoFrame(timestamp);
@@ -494,15 +526,16 @@
                                 }
                             }
 
+                            if (cancelAdGeneration) {
+                                throw new Error('Cancelled by user');
+                            }
+
                             if (frames.length === 0) {
-                                console.error('No frames captured.');
-                                generateAdButton.textContent = 'GENERATE AD';
-                                generateAdButton.disabled = false;
-                                return;
+                                throw new Error('No frames were captured.');
                             }
 
                             console.log('[AD] Frame capture complete. Sending to Gemini...');
-                            generateAdButton.textContent = 'Generating descriptions...';
+                            generateAdButton.textContent = 'Generating descriptions... (Click to cancel)';
 
                             const customizations = {
                                 length: sidebar.querySelector('#length-slider').value,
@@ -513,51 +546,60 @@
 
                             const videoUrl = window.location.href;
 
-                            chrome.runtime.sendMessage({
-                                type: 'CALL_GEMINI_FOR_AD',
-                                customizations: customizations,
-                                frames: frames,
-                                videoUrl: videoUrl
-                            }, (response) => {
-                                generateAdButton.textContent = 'GENERATE AD';
-                                generateAdButton.disabled = false;
+                            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('AD generation timed out')), 30000));
 
-                                if (response && response.success) {
-                                    console.log('AD Generation successful:', response.text);
-                                    try {
-                                        // Strip markdown and parse
-                                        const jsonString = response.text.replace(/```json\n|```/g, '');
-                                        const adData = JSON.parse(jsonString);
-                                        
-                                        let descriptions = [];
-                                        if (adData.VideoMetadata && adData.VideoMetadata.audio_descriptions) {
-                                            descriptions = adData.VideoMetadata.audio_descriptions;
-                                        } else if (adData.audio_descriptions) {
-                                            descriptions = adData.audio_descriptions;
-                                        } else if (adData.VideoMetadata && adData.VideoMetadata.AudioDescriptions) {
-                                            descriptions = adData.VideoMetadata.AudioDescriptions;
-                                        }
-
-                                        adSchedule = descriptions.map(desc => ({
-                                            timestamp: (desc.timestamp_ms || desc.timestamp_in_seconds * 1000) / 1000,
-                                            description: desc.description,
-                                            played: false
-                                        }));
-                                        displayAdBubbles(adSchedule);
-                                    } catch (e) {
-                                        console.error('Error parsing AD response:', e);
-                                        alert('Error parsing audio descriptions. Check console for details.');
+                            const geminiPromise = new Promise((resolve, reject) => {
+                                chrome.runtime.sendMessage({
+                                    type: 'CALL_GEMINI_FOR_AD',
+                                    customizations: customizations,
+                                    frames: frames,
+                                    videoUrl: videoUrl
+                                }, (response) => {
+                                    if (cancelAdGeneration) {
+                                        reject(new Error('Cancelled by user'));
+                                    } else {
+                                        resolve(response);
                                     }
-                                } else {
-                                    console.error('AD Generation error:', response?.error);
-                                    alert(`AD Generation error: ${response?.error || 'Unknown error'}`);
-                                }
+                                });
                             });
+
+                            const response = await Promise.race([geminiPromise, timeoutPromise]);
+
+                            if (response && response.success) {
+                                console.log('AD Generation successful:', response.text);
+                                // Strip markdown and parse
+                                const jsonString = response.text.replace(/```json\n|```/g, '');
+                                const adData = JSON.parse(jsonString);
+                                
+                                let descriptions = [];
+                                if (adData.VideoMetadata && adData.VideoMetadata.audio_descriptions) {
+                                    descriptions = adData.VideoMetadata.audio_descriptions;
+                                } else if (adData.audio_descriptions) {
+                                    descriptions = adData.audio_descriptions;
+                                } else if (adData.VideoMetadata && adData.VideoMetadata.AudioDescriptions) {
+                                    descriptions = adData.VideoMetadata.AudioDescriptions;
+                                }
+
+                                adSchedule = descriptions.map(desc => ({
+                                    timestamp: (desc.timestamp_ms || desc.timestamp_in_seconds * 1000) / 1000,
+                                    description: desc.description,
+                                    played: false
+                                }));
+                                displayAdBubbles(adSchedule);
+                                video.currentTime = 0; // Restart video to apply ADs
+                            } else {
+                                throw new Error(response?.error || 'Unknown error during AD generation');
+                            }
                         } catch (error) {
-                            console.error('Error during frame capture:', error);
+                            console.log('[AD] AD generation stopped:', error.message);
+                            if (error.message !== 'Cancelled by user' && error.message !== 'AD generation timed out') {
+                                alert(`AD Generation Error: ${error.message}`);
+                            }
+                        } finally {
+                            isAdGenerationRunning = false;
+                            cancelAdGeneration = false;
                             generateAdButton.textContent = 'GENERATE AD';
                             generateAdButton.disabled = false;
-                            alert(`Error capturing frames: ${error.message}`);
                         }
                     });
                 }
@@ -650,11 +692,22 @@
                 };
 
                 if (video) {
+                    video.addEventListener('seeked', () => {
+                        const currentTime = video.currentTime;
+                        adSchedule.forEach(ad => {
+                            if (ad.timestamp >= currentTime) {
+                                ad.played = false;
+                            }
+                        });
+                    });
+
                     video.addEventListener('timeupdate', () => {
                         if (adSchedule.length > 0) {
                             const currentTime = video.currentTime;
                             const adIndex = adSchedule.findIndex(ad => {
-                                const triggerTime = Math.max(0, ad.timestamp - 1);
+                                const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                                const offset = pauseAdButton ? 1 : 5;
+                                const triggerTime = Math.max(0, ad.timestamp - offset);
                                 return currentTime >= triggerTime && !ad.played;
                             });
                             if (adIndex !== -1) {
@@ -676,16 +729,13 @@
                                 }, (ttsResponse) => {
                                     if (ttsResponse && ttsResponse.success) {
                                         const speakerBtn = sidebar.querySelector(`#ad-speaker-btn-${adIndex}`);
-                                        const audio = playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn);
-                                        if (audio) {
-                                            audio.onended = () => {
-                                                console.log('[AD] AD audio ended');
-                                                if (pauseAdButton) {
-                                                    console.log('[AD] Resuming video');
-                                                    video.play();
-                                                }
-                                            };
-                                        }
+                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn, () => {
+                                            console.log('[AD] AD audio ended');
+                                            if (pauseAdButton) {
+                                                console.log('[AD] Resuming video');
+                                                video.play();
+                                            }
+                                        });
                                     } else {
                                         console.error('OpenAI TTS error:', ttsResponse?.error);
                                         // Resume video on error only if it was paused
@@ -701,6 +751,9 @@
 
                 // Prevent arrow keys from controlling video when sidebar is focused
                 sidebar.addEventListener('keydown', (e) => {
+                    if (e.target.classList.contains('slider')) {
+                        return; // Don't prevent default for sliders
+                    }
                     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                         e.stopPropagation();
                         e.preventDefault();
