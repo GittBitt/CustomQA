@@ -305,19 +305,42 @@
                 // Add event listeners for button clicks
                 sidebar.addEventListener('click', (e) => {
                     if (e.target.classList.contains('pill-button')) {
-                        const buttonGroup = e.target.parentElement;
+                        const button = e.target;
+                        const buttonGroup = button.parentElement;
                         const buttons = buttonGroup.querySelectorAll('.pill-button');
+                        const subsectionTitleElement = buttonGroup.parentElement.querySelector('.subsection-title');
                         
-                        const isMultipleChoice = buttonGroup.parentElement.querySelector('.subsection-title')?.textContent.includes('multiple choice');
+                        const isMultipleChoice = buttonGroup.dataset.selectionType === 'multiple';
                         
                         if (!isMultipleChoice) {
-                            buttons.forEach(btn => btn.classList.remove('active'));
-                            e.target.classList.add('active');
+                            buttons.forEach(btn => {
+                                btn.classList.remove('active');
+                                btn.setAttribute('aria-pressed', 'false');
+                            });
+                            button.classList.add('active');
+                            button.setAttribute('aria-pressed', 'true');
+
+                            if (subsectionTitleElement) {
+                                const groupName = subsectionTitleElement.textContent.trim().replace(':', '');
+                                subsectionTitleElement.setAttribute('aria-label', `${groupName}: ${button.textContent.trim()}`);
+                            }
                         } else {
-                            e.target.classList.toggle('active');
+                            button.classList.toggle('active');
+                            button.setAttribute('aria-pressed', button.classList.contains('active') ? 'true' : 'false');
+                            // For multiple choice, update the aria-label to list all active options
+                            if (subsectionTitleElement) {
+                                const activeButtons = buttonGroup.querySelectorAll('.pill-button.active');
+                                const selectedOptions = Array.from(activeButtons).map(btn => btn.textContent.trim());
+                                const groupName = subsectionTitleElement.textContent.trim().replace(':', '');
+                                if (selectedOptions.length > 0) {
+                                    subsectionTitleElement.setAttribute('aria-label', `${groupName}: ${selectedOptions.join(', ')}`);
+                                } else {
+                                    subsectionTitleElement.setAttribute('aria-label', `${groupName}: None selected`);
+                                }
+                            }
                         }
 
-                        if (e.target.dataset.gender) {
+                        if (button.dataset.gender) {
                             const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                             const otherTab = sidebar.querySelector('.tab-content[style*="display: none"]');
                             syncPresentationSettings(activeTab, otherTab);
