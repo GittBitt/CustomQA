@@ -133,11 +133,13 @@ async function callOpenAI_TTS_API(text, gender) {
     
     console.log(`[OpenAI TTS] Using API Key: ...${apiKey.slice(-4)}`);
     
-    let voice = 'alloy'; // default
+    let voice = 'alloy'; // default voice, often perceived as neutral/androgynous
     if (gender === 'female') {
         voice = 'nova';
     } else if (gender === 'male') {
         voice = 'echo';
+    } else if (gender === 'androgynous') {
+        voice = 'alloy'; // Explicitly use alloy for androgynous
     }
 
     console.log(`[OpenAI TTS] Calling API with text: "${text.substring(0, 50)}..." and voice: "${voice}"`);
@@ -264,13 +266,13 @@ CUSTOM GUIDELINES SPECIFIED BY USER:
 ${guidelines}
 
 TASK INSTRUCTIONS:
-For each provided video frame with a timestamp, describe what happens from that timestamp until the next frame appears:
-1. Analyze what is happening visually in the frame
-2. Create an audio description covering the time period FROM this timestamp TO the next frame timestamp
-3. Focus on the customization settings provided
-4. Ensure descriptions are presented in the order of the frames
-5. Each description should serve as audio narration for that time range in the video
-6. Return descriptions as valid JSON matching the VideoMetadata schema
+You are provided with a series of video frames, each with a timestamp. Your task is to generate an audio description for each time segment between frames.
+When generating a description for a segment (e.g., from timestamp A to timestamp B), you must analyze *all* the frames provided to understand the full context of the scene. The description for that segment should summarize the key visual events that happen between timestamp A and B, not just what is visible at timestamp A.
+1. For each frame and its timestamp, create an audio description for the time period starting at that timestamp and ending at the next one.
+2. This description must summarize the actions and changes occurring during this interval, using all provided frames for context.
+3. Adhere to the user's customization settings.
+4. Ensure descriptions are presented in the order of the frames.
+5. Return descriptions as valid JSON matching the VideoMetadata schema.
 
 IMPORTANT: Your response must be valid JSON matching the VideoMetadata schema with the structure:
 {

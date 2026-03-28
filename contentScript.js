@@ -463,7 +463,7 @@
                             case 'often':
                                 interval = 30;
                                 break;
-                            case 'very':
+                            case 'very-often':
                                 interval = 15;
                                 break;
                             default:
@@ -568,8 +568,7 @@
                     adMessages.innerHTML = '';
                     
                     // Get gender with fallback
-                    const genderButton = sidebar.querySelector('.pill-button[data-gender].active');
-                    const gender = genderButton ? genderButton.dataset.gender : 'female'; // Default to female if not found
+                                                const genderButton = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');                    const gender = genderButton ? genderButton.dataset.gender : 'female'; // Default to female if not found
                     
                     descriptions.forEach((desc, index) => {
                         // Create container for message + speaker button
@@ -596,6 +595,7 @@
                         
                         // Create speaker button
                         const speakerBtn = document.createElement('button');
+                        speakerBtn.id = `ad-speaker-btn-${index}`;
                         setButtonToSpeakerIcon(speakerBtn);
                         speakerBtn.style.background = 'none';
                         speakerBtn.style.border = 'none';
@@ -653,14 +653,18 @@
                     video.addEventListener('timeupdate', () => {
                         if (adSchedule.length > 0) {
                             const currentTime = video.currentTime;
-                            const nextAd = adSchedule.find(ad => currentTime >= ad.timestamp && !ad.played);
-                            if (nextAd) {
+                            const adIndex = adSchedule.findIndex(ad => currentTime >= ad.timestamp && !ad.played);
+                            if (adIndex !== -1) {
+                                const nextAd = adSchedule[adIndex];
                                 nextAd.played = true;
-                                // ALWAYS pause for AD playback
-                                console.log('[AD] Pausing video at', currentTime, 'for AD');
-                                video.pause();
+
+                                const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                                if (pauseAdButton) {
+                                    console.log('[AD] Pausing video at', currentTime, 'for AD');
+                                    video.pause();
+                                }
                                 
-                                const genderBtnAD = sidebar.querySelector('.pill-button[data-gender].active');
+                                const genderBtnAD = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
                                 const gender = genderBtnAD ? genderBtnAD.dataset.gender : 'female';
                                 chrome.runtime.sendMessage({
                                     type: 'CALL_OPENAI_TTS',
@@ -668,17 +672,23 @@
                                     gender: gender
                                 }, (ttsResponse) => {
                                     if (ttsResponse && ttsResponse.success) {
-                                        const audio = playAudioFromDataUrl(ttsResponse.audioDataUrl, null);
+                                        const speakerBtn = sidebar.querySelector(`#ad-speaker-btn-${adIndex}`);
+                                        const audio = playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn);
                                         if (audio) {
                                             audio.onended = () => {
-                                                console.log('[AD] AD audio ended, resuming video');
-                                                video.play();
+                                                console.log('[AD] AD audio ended');
+                                                if (pauseAdButton) {
+                                                    console.log('[AD] Resuming video');
+                                                    video.play();
+                                                }
                                             };
                                         }
                                     } else {
                                         console.error('OpenAI TTS error:', ttsResponse?.error);
-                                        // Resume video on error
-                                        video.play();
+                                        // Resume video on error only if it was paused
+                                        if (pauseAdButton) {
+                                            video.play();
+                                        }
                                     }
                                 });
                             }
@@ -775,7 +785,7 @@
                                     setButtonToSpeakerIcon(thisButton);
                                     return;
                                 }
-                                const genderBtnUser = sidebar.querySelector('.pill-button[data-gender].active');
+                                const genderBtnUser = sidebar.querySelector('#vqa-tab .pill-button[data-gender].active');
                                 const genderUser = genderBtnUser ? genderBtnUser.dataset.gender : 'female';
                                 if (textToSpeak) {
                                     chrome.runtime.sendMessage({
@@ -850,7 +860,7 @@
                                 }
 
                                 const textToSpeak = aiTextSpan.textContent;
-                                const genderBtnAI = sidebar.querySelector('.pill-button[data-gender].active');
+                                const genderBtnAI = sidebar.querySelector('#vqa-tab .pill-button[data-gender].active');
                                 const genderAI = genderBtnAI ? genderBtnAI.dataset.gender : 'female';
                                 if (textToSpeak && textToSpeak !== 'Thinking...') {
                                     chrome.runtime.sendMessage({
