@@ -653,7 +653,10 @@
                     video.addEventListener('timeupdate', () => {
                         if (adSchedule.length > 0) {
                             const currentTime = video.currentTime;
-                            const adIndex = adSchedule.findIndex(ad => currentTime >= ad.timestamp && !ad.played);
+                            const adIndex = adSchedule.findIndex(ad => {
+                                const triggerTime = Math.max(0, ad.timestamp - 1);
+                                return currentTime >= triggerTime && !ad.played;
+                            });
                             if (adIndex !== -1) {
                                 const nextAd = adSchedule[adIndex];
                                 nextAd.played = true;

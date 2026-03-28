@@ -252,7 +252,8 @@ GENERAL AUDIO DESCRIPTION GUIDELINES:
 
     base_prompt += `
 CUSTOM GUIDELINES SPECIFIED BY USER:
-- Description Length: Target approximately ${customizations.length} words per description segment
+- Description Length: Target approximately ${customizations.length} words per description segment. This is a soft limit; you can go 5 words over or under if it improves the description.
+- Scene Change Timestamps: If you detect a significant scene change within a segment, mention the timestamp of the change in the description (e.g., "At 1:05, the scene changes to..."). Only include this if it fits naturally within the word count.
 - Emphasis: ${emphasis_guidelines[customizations.emphasis] || emphasis_guidelines['balanced']}
 - Style: ${subjectiveness_guidelines[customizations.subjectiveness] || subjectiveness_guidelines['objective']}
 `;
