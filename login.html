@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CustomQA - Login</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .login-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 420px;
+            padding: 40px;
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .login-logo {
+            font-size: 32px;
+            margin-bottom: 12px;
+        }
+
+        .login-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 8px;
+        }
+
+        .login-subtitle {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #000;
+            margin-bottom: 6px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .login-button {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 24px;
+        }
+
+        .login-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .login-button:active {
+            transform: translateY(0);
+        }
+
+        .login-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .login-error {
+            padding: 12px;
+            background: #ffe6e6;
+            color: #c33;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .login-error.show {
+            display: block;
+        }
+
+        .login-success {
+            padding: 12px;
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .login-success.show {
+            display: block;
+        }
+
+        .signup-link {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .signup-link a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.2s;
+        }
+
+        .signup-link a:hover {
+            color: #764ba2;
+        }
+
+        .remember-me {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 16px;
+        }
+
+        .remember-me input {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <div class="login-logo">✦</div>
+            <h1 class="login-title">CustomQA</h1>
+            <p class="login-subtitle">Sign in to your account</p>
+        </div>
+
+        <form id="login-form">
+            <div class="login-error" id="login-error"></div>
+            <div class="login-success" id="login-success"></div>
+
+            <div class="form-group">
+                <label class="form-label" for="email">Email Address</label>
+                <input 
+                    type="email" 
+                    id="email" 
+                    class="form-input" 
+                    placeholder="your@email.com" 
+                    required
+                    autocomplete="email"
+                />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="password">Password</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    class="form-input" 
+                    placeholder="Enter your password" 
+                    required
+                    autocomplete="current-password"
+                />
+            </div>
+
+            <div class="remember-me">
+                <input type="checkbox" id="remember" />
+                <label for="remember" style="margin: 0; cursor: pointer;">Remember me</label>
+            </div>
+
+            <button type="submit" class="login-button" id="submit-btn">Sign In</button>
+        </form>
+
+        <div class="signup-link">
+            Don't have an account? <a href="signup.html">Sign up</a>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('login-form');
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        const rememberInput = document.getElementById('remember');
+        const submitBtn = document.getElementById('submit-btn');
+        const errorDiv = document.getElementById('login-error');
+        const successDiv = document.getElementById('login-success');
+
+        // Load saved email if "remember me" was checked
+        window.addEventListener('load', () => {
+            const savedEmail = localStorage.getItem('customqa_saved_email');
+            if (savedEmail) {
+                emailInput.value = savedEmail;
+                rememberInput.checked = true;
+            }
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const email = emailInput.value.trim();
+            const password = passwordInput.value;
+            const remember = rememberInput.checked;
+
+            // Clear messages
+            errorDiv.classList.remove('show');
+            successDiv.classList.remove('show');
+
+            // Validation
+            if (!email || !password) {
+                showError('Email and password are required');
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Signing in...';
+
+            try {
+                // Firebase config
+                const FIREBASE_API_KEY = 'AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A';
+                const PROJECT_ID = 'customqa-cf40b';
+
+                console.log('Attempting login for:', email);
+
+                // Step 1: Sign in with Firebase Auth
+                const loginResponse = await fetch(
+                    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email,
+                            password,
+                            returnSecureToken: true
+                        })
+                    }
+                );
+
+                console.log('Login response status:', loginResponse.status);
+
+                if (!loginResponse.ok) {
+                    const errorData = await loginResponse.json();
+                    console.error('Login error details:', errorData);
+                    throw new Error(errorData.error?.message || 'Login failed');
+                }
+
+                const loginData = await loginResponse.json();
+                const userId = loginData.localId;
+                const idToken = loginData.idToken;
+
+                console.log('Login successful, userId:', userId);
+
+                // Step 2: Fetch user data from Firestore
+                const userResponse = await fetch(
+                    `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${userId}?key=${FIREBASE_API_KEY}`,
+                    {
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/json' }
+                    }
+                );
+
+                console.log('User fetch response status:', userResponse.status);
+
+                if (!userResponse.ok) {
+                    console.warn('Could not fetch user data, but auth succeeded');
+                }
+
+                // Save session data
+                sessionStorage.setItem('customqa_user_id', userId);
+                sessionStorage.setItem('customqa_id_token', idToken);
+                sessionStorage.setItem('customqa_email', email);
+
+                // Save email if remember me is checked
+                if (remember) {
+                    localStorage.setItem('customqa_saved_email', email);
+                } else {
+                    localStorage.removeItem('customqa_saved_email');
+                }
+
+                showSuccess('Login successful! Redirecting...');
+                setTimeout(() => {
+                    // Redirect back to extension or dashboard
+                    window.close();
+                }, 1500);
+
+            } catch (error) {
+                console.error('Login error:', error);
+                showError(error.message || 'Failed to sign in. Check browser console (F12) for details.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Sign In';
+            }
+        });
+
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
+            window.scrollTo(0, 0);
+        }
+
+        function showSuccess(message) {
+            successDiv.textContent = message;
+            successDiv.classList.add('show');
+        }
+    </script>
+</body>
+</html>

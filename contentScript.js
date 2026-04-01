@@ -147,6 +147,367 @@
 
                 sidebar.innerHTML = html;
 
+                // Setup avatar button click handler for auth menu
+                const avatarBtn = sidebar.querySelector('#auth-avatar-btn');
+                const sidebarHeader = sidebar.querySelector('.sidebar-header');
+                
+                let authMenuOpen = false;
+                const FIREBASE_API_KEY = 'AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A';
+                const PROJECT_ID = 'customqa-cf40b';
+                
+                // Check if user is logged in
+                const checkAuthStatus = () => {
+                    const userId = sessionStorage.getItem('customqa_user_id');
+                    const email = sessionStorage.getItem('customqa_email');
+                    return { isLoggedIn: !!userId, userId, email };
+                };
+                
+                // Render auth menu based on login state
+                const renderAuthMenu = (authMenu) => {
+                    const { isLoggedIn, email } = checkAuthStatus();
+                    
+                    if (isLoggedIn) {
+                        authMenu.innerHTML = `
+                            <div class="auth-popup-content">
+                                <div class="auth-popup-title">${email}</div>
+                                <div style="font-size: 12px; color: #666; margin-bottom: 12px;">Logged in</div>
+                                <button class="auth-popup-button auth-popup-secondary" id="popup-logout-btn" type="button">Logout</button>
+                            </div>
+                        `;
+                        
+                        // Add logout handler
+                        const logoutBtn = authMenu.querySelector('#popup-logout-btn');
+                        logoutBtn.addEventListener('click', () => {
+                            sessionStorage.removeItem('customqa_user_id');
+                            sessionStorage.removeItem('customqa_id_token');
+                            sessionStorage.removeItem('customqa_email');
+                            sessionStorage.removeItem('customqa_role');
+                            
+                            authMenu.style.display = 'none';
+                            authMenuOpen = false;
+                            avatarBtn.textContent = '👤';
+                            avatarBtn.title = 'Login/Signup';
+                            
+                            alert('Logged out successfully');
+                            renderAuthMenu(authMenu);
+                        });
+                    } else {
+                        authMenu.innerHTML = `
+                            <div class="auth-popup-content">
+                                <div class="auth-popup-title">Login</div>
+                                <input type="email" id="popup-email" class="auth-popup-input" placeholder="Email" />
+                                <input type="password" id="popup-password" class="auth-popup-input" placeholder="Password" />
+                                <button class="auth-popup-button" id="popup-login-btn" type="button">Login</button>
+                                <div style="text-align: center; margin: 8px 0; font-size: 12px; color: #999;">OR</div>
+                                <a href="${chrome.runtime.getURL('signup.html')}" target="_blank" class="auth-popup-button auth-popup-secondary" style="text-align: center; text-decoration: none; display: block;">Sign Up</a>
+                            </div>
+                        `;
+                        
+                        // Add login button handler
+                        const loginBtn = authMenu.querySelector('#popup-login-btn');
+                        const emailInput = authMenu.querySelector('#popup-email');
+                        const passwordInput = authMenu.querySelector('#popup-password');
+
+                        loginBtn.addEventListener('click', async (e) => {
+                            e.preventDefault();
+                            const email = emailInput.value.trim();
+                            const password = passwordInput.value;
+
+                            if (!email || !password) {
+                                alert('Please enter email and password');
+                                return;
+                            }
+
+                            loginBtn.disabled = true;
+                            loginBtn.textContent = 'Logging in...';
+
+                            try {
+                                const response = await fetch(
+                                    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`,
+                                    {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            email,
+                                            password,
+                                            returnSecureToken: true
+                                        })
+                                    }
+                                );
+
+                                if (!response.ok) {
+                                    const errorData = await response.json();
+                                    throw new Error(errorData.error?.message || 'Login failed');
+                                }
+
+                                const loginData = await response.json();
+                                
+                                // Save session
+                                sessionStorage.setItem('customqa_user_id', loginData.localId);
+                                sessionStorage.setItem('customqa_id_token', loginData.idToken);
+                                sessionStorage.setItem('customqa_email', email);
+
+                                // Load user settings
+                                await loadUserSettings(loginData.localId);
+
+                                // Update UI
+                                authMenu.style.display = 'none';
+                                authMenuOpen = false;
+                                loginBtn.textContent = 'Logged in!';
+                                
+                                setTimeout(() => {
+                                    avatarBtn.textContent = '✓';
+                                    avatarBtn.title = 'Logged in as ' + email;
+                                    renderAuthMenu(authMenu);
+                                }, 1000);
+
+                            } catch (error) {
+                                alert('Login failed: ' + error.message);
+                                loginBtn.disabled = false;
+                                loginBtn.textContent = 'Login';
+                            }
+                        });
+                    }
+                };
+                
+                avatarBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    authMenuOpen = !authMenuOpen;
+                    
+                    if (authMenuOpen) {
+                        let authMenu = sidebar.querySelector('#auth-popup-menu');
+                        if (!authMenu) {
+                            authMenu = document.createElement('div');
+                            authMenu.id = 'auth-popup-menu';
+                            authMenu.className = 'auth-popup-menu';
+                            sidebarHeader.appendChild(authMenu);
+                        }
+                        renderAuthMenu(authMenu);
+                        authMenu.style.display = 'block';
+                    } else {
+                        const authMenu = sidebar.querySelector('#auth-popup-menu');
+                        if (authMenu) {
+                            authMenu.style.display = 'none';
+                        }
+                    }
+                });
+                
+                // Load user settings from Firestore
+                const loadUserSettings = async (userId) => {
+                    try {
+                        const adResponse = await fetch(
+                            `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${userId}/settings/audioDescription?key=${FIREBASE_API_KEY}`,
+                            { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+                        );
+
+                        if (adResponse.ok) {
+                            const adData = await adResponse.json();
+                            const fields = adData.fields || {};
+                            
+                            // Restore AD settings
+                            if (fields.volume?.integerValue) {
+                                const vol = fields.volume.integerValue;
+                                const slider = sidebar.querySelector('#ad-volume-slider');
+                                if (slider) slider.value = vol;
+                            }
+                            if (fields.speed?.integerValue) {
+                                const spd = fields.speed.integerValue;
+                                const slider = sidebar.querySelector('#ad-speed-slider');
+                                if (slider) slider.value = spd;
+                            }
+                            if (fields.gender?.stringValue) {
+                                const gender = fields.gender.stringValue;
+                                const btn = sidebar.querySelector(`[data-gender="${gender}"]`);
+                                if (btn) {
+                                    sidebar.querySelectorAll('[data-gender]').forEach(b => b.classList.remove('active'));
+                                    btn.classList.add('active');
+                                }
+                            }
+                            if (fields.frequency?.stringValue) {
+                                const freq = fields.frequency.stringValue;
+                                const btn = sidebar.querySelector(`[data-frequency="${freq}"]`);
+                                if (btn) {
+                                    sidebar.querySelectorAll('[data-frequency]').forEach(b => b.classList.remove('active'));
+                                    btn.classList.add('active');
+                                }
+                            }
+                            if (fields.emphasis?.stringValue) {
+                                const emph = fields.emphasis.stringValue;
+                                const btn = sidebar.querySelector(`[data-emphasis="${emph}"]`);
+                                if (btn) {
+                                    sidebar.querySelectorAll('[data-emphasis]').forEach(b => b.classList.remove('active'));
+                                    btn.classList.add('active');
+                                }
+                            }
+                        }
+
+                        const vqaResponse = await fetch(
+                            `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${userId}/settings/vqa?key=${FIREBASE_API_KEY}`,
+                            { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+                        );
+
+                        if (vqaResponse.ok) {
+                            const vqaData = await vqaResponse.json();
+                            const fields = vqaData.fields || {};
+                            
+                            // Restore VQA settings
+                            if (fields.volume?.integerValue) {
+                                const vol = fields.volume.integerValue;
+                                const slider = sidebar.querySelector('#vqa-volume-slider');
+                                if (slider) slider.value = vol;
+                            }
+                            if (fields.speed?.integerValue) {
+                                const spd = fields.speed.integerValue;
+                                const slider = sidebar.querySelector('#vqa-speed-slider');
+                                if (slider) slider.value = spd;
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Failed to load user settings:', error);
+                    }
+                };
+                
+                // Save AD settings
+                const adSaveBtn = sidebar.querySelector('#ad-save-button');
+                if (adSaveBtn) {
+                    adSaveBtn.addEventListener('click', async () => {
+                        const { isLoggedIn, userId } = checkAuthStatus();
+                        if (!isLoggedIn) {
+                            alert('Please log in to save settings');
+                            return;
+                        }
+
+                        adSaveBtn.disabled = true;
+                        adSaveBtn.textContent = 'SAVING...';
+
+                        try {
+                            const volume = sidebar.querySelector('#ad-volume-slider')?.value || 50;
+                            const speed = sidebar.querySelector('#ad-speed-slider')?.value || 50;
+                            const length = sidebar.querySelector('#length-slider')?.value || 25;
+                            const gender = sidebar.querySelector('[data-gender].active')?.dataset?.gender || 'female';
+                            const frequency = sidebar.querySelector('[data-frequency].active')?.dataset?.frequency || 'sometimes';
+                            const emphasis = sidebar.querySelector('[data-emphasis].active')?.dataset?.emphasis || 'balanced';
+                            const color = sidebar.querySelector('[data-color].active')?.dataset?.color || 'on';
+                            const narration = sidebar.querySelector('[data-narration].active')?.dataset?.narration || 'objective';
+
+                            const settingsBody = {
+                                fields: {
+                                    volume: { integerValue: volume },
+                                    speed: { integerValue: speed },
+                                    length: { integerValue: length },
+                                    gender: { stringValue: gender },
+                                    frequency: { stringValue: frequency },
+                                    emphasis: { stringValue: emphasis },
+                                    colorPreference: { stringValue: color },
+                                    narrationStyle: { stringValue: narration },
+                                    updatedAt: { timestampValue: new Date().toISOString() }
+                                }
+                            };
+
+                            const response = await fetch(
+                                `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${userId}/settings/audioDescription?key=${FIREBASE_API_KEY}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(settingsBody)
+                                }
+                            );
+
+                            if (!response.ok) {
+                                throw new Error('Failed to save settings');
+                            }
+
+                            adSaveBtn.textContent = 'SAVED ✓';
+                            setTimeout(() => {
+                                adSaveBtn.textContent = 'SAVE CHANGES';
+                                adSaveBtn.disabled = false;
+                            }, 2000);
+
+                        } catch (error) {
+                            alert('Failed to save settings: ' + error.message);
+                            adSaveBtn.textContent = 'SAVE CHANGES';
+                            adSaveBtn.disabled = false;
+                        }
+                    });
+                }
+                
+                // Check if user is already logged in on page load
+                const { isLoggedIn, userId } = checkAuthStatus();
+                if (isLoggedIn) {
+                    avatarBtn.textContent = '✓';
+                    avatarBtn.title = 'Logged in as ' + sessionStorage.getItem('customqa_email');
+                    loadUserSettings(userId);
+                }
+
+                // Close menu when clicking outside
+                document.addEventListener('click', (e) => {
+                    if (authMenuOpen && !sidebarHeader.contains(e.target)) {
+                        authMenuOpen = false;
+                        const authMenu = sidebar.querySelector('#auth-popup-menu');
+                        if (authMenu) {
+                            authMenu.style.display = 'none';
+                        }
+                    }
+                });
+
+                // Save VQA settings - find all vqa save buttons
+                const vqaSaveButtons = sidebar.querySelectorAll('[aria-label="Save Changes"]');
+                vqaSaveButtons.forEach((btn, index) => {
+                    if (index === 1) { // The second Save Changes button is for VQA
+                        btn.addEventListener('click', async () => {
+                            const { isLoggedIn, userId } = checkAuthStatus();
+                            if (!isLoggedIn) {
+                                alert('Please log in to save settings');
+                                return;
+                            }
+
+                            btn.disabled = true;
+                            btn.textContent = 'SAVING...';
+
+                            try {
+                                const volume = sidebar.querySelector('#vqa-volume-slider')?.value || 50;
+                                const speed = sidebar.querySelector('#vqa-speed-slider')?.value || 50;
+                                const length = sidebar.querySelector('#vqa-length-slider')?.value || 25;
+                                const gender = sidebar.querySelector('#vqa-gender-group .active')?.dataset?.gender || 'female';
+
+                                const settingsBody = {
+                                    fields: {
+                                        volume: { integerValue: volume },
+                                        speed: { integerValue: speed },
+                                        length: { integerValue: length },
+                                        gender: { stringValue: gender },
+                                        updatedAt: { timestampValue: new Date().toISOString() }
+                                    }
+                                };
+
+                                const response = await fetch(
+                                    `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${userId}/settings/vqa?key=${FIREBASE_API_KEY}`,
+                                    {
+                                        method: 'PATCH',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(settingsBody)
+                                    }
+                                );
+
+                                if (!response.ok) {
+                                    throw new Error('Failed to save settings');
+                                }
+
+                                btn.textContent = 'SAVED ✓';
+                                setTimeout(() => {
+                                    btn.textContent = 'SAVE CHANGES';
+                                    btn.disabled = false;
+                                }, 2000);
+
+                            } catch (error) {
+                                alert('Failed to save settings: ' + error.message);
+                                btn.textContent = 'SAVE CHANGES';
+                                btn.disabled = false;
+                            }
+                        });
+                    }
+                });
+
                 // Load and set volume for both sliders
                 const adVolumeSlider = sidebar.querySelector('#ad-volume-slider');
                 const vqaVolumeSlider = sidebar.querySelector('#vqa-volume-slider');
