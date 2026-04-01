@@ -11,7 +11,12 @@
     ],
     "host_permissions": [
         "https://*.youtube.com/*",
-        "https://generativelanguage.googleapis.com/*"
+        "https://generativelanguage.googleapis.com/*",
+        "https://www.googleapis.com/*",
+        "https://*.firebaseio.com/*",
+        "https://securetoken.googleapis.com/*",
+        "https://identitytoolkit.googleapis.com/*",
+        "https://firestore.googleapis.com/*"
     ],
     "background": {
         "service_worker": "background.js"
@@ -29,6 +34,10 @@
                 "popup.js",
                 "sidebar.html",
                 "sidebar.css",
+                "signup.html",
+                "login.html",
+                "firebase-rest-api.js",
+                "auth-ui.js",
                 ".env",
                 "assets/activation.mp3"
             ],

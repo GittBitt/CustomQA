@@ -107,6 +107,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.type === 'OPEN_POPUP') {
     chrome.action.openPopup();
     return true;
+  } else if (request.type === 'AUTH_SIGNUP') {
+    handleAuthSignup(request, sendResponse);
+    return true;
+  } else if (request.type === 'AUTH_LOGIN') {
+    handleAuthLogin(request, sendResponse);
+    return true;
+  } else if (request.type === 'AUTH_LOGOUT') {
+    handleAuthLogout(sendResponse);
+    return true;
+  } else if (request.type === 'AUTH_CHECK') {
+    handleAuthCheck(sendResponse);
+    return true;
   }
 });
 
@@ -421,5 +433,69 @@ async function callGeminiAPI(prompt, frames) {
     console.error("[Gemini API] Error calling Gemini API:", error.message);
     throw new Error(`[Gemini API] Error: ${error.message}`);
   }
+}
+
+// Firebase Auth Handlers - these need to be handled in content script context
+// since Firebase SDK requires DOM access in extension context
+
+function handleAuthSignup(request, sendResponse) {
+  console.log('[BG] Auth signup request:', request.email);
+  // Send to content script which has Firebase context
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(
+        tabs[0].id,
+        { type: 'FIREBASE_SIGNUP', email: request.email, password: request.password, role: request.role },
+        (response) => {
+          sendResponse(response);
+        }
+      );
+    }
+  });
+}
+
+function handleAuthLogin(request, sendResponse) {
+  console.log('[BG] Auth login request:', request.email);
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(
+        tabs[0].id,
+        { type: 'FIREBASE_LOGIN', email: request.email, password: request.password },
+        (response) => {
+          sendResponse(response);
+        }
+      );
+    }
+  });
+}
+
+function handleAuthLogout(sendResponse) {
+  console.log('[BG] Auth logout request');
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(
+        tabs[0].id,
+        { type: 'FIREBASE_LOGOUT' },
+        (response) => {
+          sendResponse(response);
+        }
+      );
+    }
+  });
+}
+
+function handleAuthCheck(sendResponse) {
+  console.log('[BG] Auth check request');
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(
+        tabs[0].id,
+        { type: 'FIREBASE_CHECK' },
+        (response) => {
+          sendResponse(response || { user: null });
+        }
+      );
+    }
+  });
 }
   
