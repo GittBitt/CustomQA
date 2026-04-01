@@ -154,11 +154,11 @@
                 const setSliderValues = (volume) => {
                     if (adVolumeSlider) {
                         adVolumeSlider.value = volume;
-                        adVolumeSlider.setAttribute('aria-valuetext', `${volume}%`);
+                        adVolumeSlider.setAttribute('aria-valuetext', `Volume ${volume}%`);
                     }
                     if (vqaVolumeSlider) {
                         vqaVolumeSlider.value = volume;
-                        vqaVolumeSlider.setAttribute('aria-valuetext', `${volume}%`);
+                        vqaVolumeSlider.setAttribute('aria-valuetext', `Volume ${volume}%`);
                     }
                 };
 
@@ -179,6 +179,13 @@
                 }
                 if (vqaVolumeSlider) {
                     vqaVolumeSlider.addEventListener('input', volumeChangeHandler);
+                }
+
+                const vqaBadgeButton = sidebar.querySelector('.vqa-badge');
+                if (vqaBadgeButton) {
+                    vqaBadgeButton.addEventListener('click', () => {
+                        chrome.runtime.sendMessage({ type: 'OPEN_POPUP' });
+                    });
                 }
 
                 // Tab switching functionality
@@ -271,12 +278,12 @@
                     if (lengthSlider && lengthValue) {
                         lengthSlider.value = newValue;
                         lengthValue.textContent = newValue;
-                        lengthSlider.setAttribute('aria-valuetext', `${newValue} words`);
+                        lengthSlider.setAttribute('aria-valuetext', `Length ${newValue} words`);
                     }
                     if (vqaLengthSlider && vqaLengthValue) {
                         vqaLengthSlider.value = newValue;
                         vqaLengthValue.textContent = newValue;
-                        vqaLengthSlider.setAttribute('aria-valuetext', `${newValue} words`);
+                        vqaLengthSlider.setAttribute('aria-valuetext', `Length ${newValue} words`);
                     }
                 };
 
@@ -299,11 +306,11 @@
                     const newValue = sourceSlider.value;
                     if (adSpeedSlider) {
                         adSpeedSlider.value = newValue;
-                        adSpeedSlider.setAttribute('aria-valuetext', `${newValue}%`);
+                        adSpeedSlider.setAttribute('aria-valuetext', `Speed ${newValue}%`);
                     }
                     if (vqaSpeedSlider) {
                         vqaSpeedSlider.value = newValue;
-                        vqaSpeedSlider.setAttribute('aria-valuetext', `${newValue}%`);
+                        vqaSpeedSlider.setAttribute('aria-valuetext', `Speed ${newValue}%`);
                     }
                 };
 
@@ -790,6 +797,15 @@
                     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                         e.stopPropagation();
                         e.preventDefault();
+                    }
+                });
+
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'q' && e.target.tagName.toLowerCase() !== 'input' && e.target.tagName.toLowerCase() !== 'textarea') {
+                        const sidebar = document.getElementById('custom-qa-sidebar');
+                        if (sidebar) {
+                            sidebar.focus();
+                        }
                     }
                 });
 

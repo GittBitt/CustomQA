@@ -104,6 +104,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })();
     
     return true;
+  } else if (request.type === 'OPEN_POPUP') {
+    chrome.action.openPopup();
+    return true;
   }
 });
 
