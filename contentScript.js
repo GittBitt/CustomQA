@@ -4,6 +4,7 @@
     gainNode.connect(audioContext.destination);
 
     let currentVolume = 1; // Default volume
+    const preloadedAudioMap = new Map();
 
     const speakerSvg = `<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"/><path d="M3 9v6h4l5 5V4L7 9zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77"/></svg>`;
     const stopSvg = `<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"/><path d="M6 6h12v12H6z"/></svg>`;
@@ -103,6 +104,30 @@
                 }
                 return null;
             }
+        };
+
+        const preloadAndStoreAudio = (text, buttonElement, gender) => {
+            if (!text || preloadedAudioMap.has(text)) {
+                if (preloadedAudioMap.has(text)) {
+                    buttonElement.setAttribute('data-audio-url', preloadedAudioMap.get(text));
+                }
+                return;
+            }
+
+            chrome.runtime.sendMessage({
+                type: 'PRELOAD_OPENAI_TTS',
+                text: text,
+                gender: gender
+            }, (response) => {
+                if (response && response.success) {
+                    preloadedAudioMap.set(response.text, response.audioDataUrl);
+                    // Find the button associated with this text and set the attribute
+                    const buttons = document.querySelectorAll(`[data-text="${response.text}"]`);
+                    buttons.forEach(btn => btn.setAttribute('data-audio-url', response.audioDataUrl));
+                } else {
+                    console.error('OpenAI TTS preload error:', response?.error);
+                }
+            });
         };
 
         const sidebarExists = document.getElementById("custom-qa-sidebar");
@@ -820,17 +845,22 @@
                     const gender = genderBtn ? genderBtn.dataset.gender : 'female';
 
                     if (textToSpeak) {
-                        chrome.runtime.sendMessage({
-                            type: 'CALL_OPENAI_TTS',
-                            text: textToSpeak,
-                            gender: gender
-                        }, (ttsResponse) => {
-                            if (ttsResponse && ttsResponse.success) {
-                                playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
-                            } else {
-                                console.error('OpenAI TTS error:', ttsResponse?.error);
-                            }
-                        });
+                        const audioUrl = thisButton.getAttribute('data-audio-url');
+                        if (audioUrl) {
+                            playAudioFromDataUrl(audioUrl, thisButton);
+                        } else {
+                            chrome.runtime.sendMessage({
+                                type: 'CALL_OPENAI_TTS',
+                                text: textToSpeak,
+                                gender: gender
+                            }, (ttsResponse) => {
+                                if (ttsResponse && ttsResponse.success) {
+                                    playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
+                                } else {
+                                    console.error('OpenAI TTS error:', ttsResponse?.error);
+                                }
+                            });
+                        }
                     }
                 });
 
@@ -867,6 +897,24 @@
                 const generateAdButton = sidebar.querySelector('#generate-ad-button');
                 if (generateAdButton) {
                     generateAdButton.addEventListener('click', async () => {
+                        // Clear previous ADs immediately
+                        adSchedule = [];
+                        const adMessages = sidebar.querySelector('#ad-messages');
+                        if (adMessages) {
+                            adMessages.innerHTML = '';
+                        }
+                        // Clear preloaded audio for old ADs
+                        preloadedAudioMap.clear();
+                        // Stop any currently playing audio
+                        if (currentAudio) {
+                            currentAudio.stop();
+                            currentAudio = null;
+                            if (currentPlayingButton) {
+                                setButtonToSpeakerIcon(currentPlayingButton);
+                                currentPlayingButton = null;
+                            }
+                        }
+                        
                         if (isAdGenerationRunning) {
                             cancelAdGeneration = true;
                             generateAdButton.textContent = 'Cancelling...';
@@ -878,6 +926,9 @@
                             console.error('Video element not found.');
                             return;
                         }
+
+                        // Pause video during generation
+                        video.pause();
 
                         isAdGenerationRunning = true;
                         cancelAdGeneration = false;
@@ -989,8 +1040,43 @@
                                     description: desc.description,
                                     played: false
                                 }));
-                                displayAdBubbles(adSchedule);
-                                video.currentTime = 0; // Restart video to apply ADs
+
+                                generateAdButton.textContent = 'Preloading audio...';
+
+                                const preloadPromises = adSchedule.map(ad => {
+                                    return new Promise((resolve, reject) => {
+                                        chrome.runtime.sendMessage({
+                                            type: 'PRELOAD_OPENAI_TTS',
+                                            text: ad.description,
+                                            gender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female'
+                                        }, (response) => {
+                                            if (response && response.success) {
+                                                preloadedAudioMap.set(response.text, response.audioDataUrl);
+                                                resolve();
+                                            } else {
+                                                console.error('OpenAI TTS preload error:', response?.error);
+                                                reject(response?.error);
+                                            }
+                                        });
+                                    });
+                                });
+
+                                Promise.all(preloadPromises).then(() => {
+                                    console.log('All audio preloaded');
+                                    displayAdBubbles(adSchedule);
+                                    video.currentTime = 0; // Restart video to apply ADs
+                                    // Wait for seek to complete, then play
+                                    const handleSeeked = () => {
+                                        video.removeEventListener('seeked', handleSeeked);
+                                        console.log('[AD] Video seeked to start, auto-playing...');
+                                        video.play();
+                                    };
+                                    video.addEventListener('seeked', handleSeeked);
+                                }).catch(error => {
+                                    console.error('Error preloading audio:', error);
+                                    alert('Error preloading audio. Please try again.');
+                                });
+
                             } else {
                                 throw new Error(response?.error || 'Unknown error during AD generation');
                             }
@@ -1013,23 +1099,20 @@
                     const adMessages = sidebar.querySelector('#ad-messages');
                     adMessages.innerHTML = '';
                     
-                    // Get gender with fallback
-                                                const genderButton = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');                    const gender = genderButton ? genderButton.dataset.gender : 'female'; // Default to female if not found
+                    const genderButton = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
+                    const gender = genderButton ? genderButton.dataset.gender : 'female';
                     
                     descriptions.forEach((desc, index) => {
-                        // Create container for message + speaker button
                         const messageContainer = document.createElement('div');
                         messageContainer.style.display = 'flex';
                         messageContainer.style.alignItems = 'flex-start';
                         messageContainer.style.gap = '8px';
                         messageContainer.style.marginBottom = '12px';
                         
-                        // Calculate timestamp range
                         const currentTs = desc.timestamp;
                         const nextTs = descriptions[index + 1]?.timestamp || video.duration;
                         const tsRange = `${formatTime(currentTs)} - ${formatTime(nextTs)}`;
                         
-                        // Create message bubble
                         const bubble = document.createElement('div');
                         bubble.className = 'chat-message bot-message';
                         bubble.style.flex = '1';
@@ -1039,10 +1122,13 @@
                         textSpan.textContent = `[${tsRange}] ${desc.description}`;
                         bubble.appendChild(textSpan);
                         
-                        // Create speaker button
                         const speakerBtn = document.createElement('button');
                         speakerBtn.id = `ad-speaker-btn-${index}`;
                         setButtonToSpeakerIcon(speakerBtn);
+                        speakerBtn.setAttribute('data-text', desc.description);
+                        if (preloadedAudioMap.has(desc.description)) {
+                            speakerBtn.setAttribute('data-audio-url', preloadedAudioMap.get(desc.description));
+                        }
                         speakerBtn.style.background = 'none';
                         speakerBtn.style.border = 'none';
                         speakerBtn.style.fontSize = '18px';
@@ -1063,9 +1149,12 @@
                                 return;
                             }
                             
-                            const textToSpeak = desc.description;
-                            
-                            if (textToSpeak) {
+                            const textToSpeak = thisButton.getAttribute('data-text');
+                            const audioUrl = thisButton.getAttribute('data-audio-url');
+
+                            if (audioUrl) {
+                                playAudioFromDataUrl(audioUrl, thisButton);
+                            } else if (textToSpeak) {
                                 chrome.runtime.sendMessage({
                                     type: 'CALL_OPENAI_TTS',
                                     text: textToSpeak,
@@ -1106,8 +1195,7 @@
                         if (adSchedule.length > 0) {
                             const currentTime = video.currentTime;
                             const adIndex = adSchedule.findIndex(ad => {
-                                const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
-                                const offset = pauseAdButton ? 1 : 5;
+                                const offset = 1;
                                 const triggerTime = Math.max(0, ad.timestamp - offset);
                                 return currentTime >= triggerTime && !ad.played;
                             });
@@ -1116,35 +1204,51 @@
                                 nextAd.played = true;
 
                                 const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
-                                if (pauseAdButton) {
+                                // Always pause for the first AD, then respect the pause-during-ad setting
+                                if (adIndex === 0 || pauseAdButton) {
                                     console.log('[AD] Pausing video at', currentTime, 'for AD');
                                     video.pause();
                                 }
                                 
                                 const genderBtnAD = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
                                 const gender = genderBtnAD ? genderBtnAD.dataset.gender : 'female';
-                                chrome.runtime.sendMessage({
-                                    type: 'CALL_OPENAI_TTS',
-                                    text: nextAd.description,
-                                    gender: gender
-                                }, (ttsResponse) => {
-                                    if (ttsResponse && ttsResponse.success) {
-                                        const speakerBtn = sidebar.querySelector(`#ad-speaker-btn-${adIndex}`);
-                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn, () => {
-                                            console.log('[AD] AD audio ended');
-                                            if (pauseAdButton) {
-                                                console.log('[AD] Resuming video');
-                                                video.play();
-                                            }
-                                        });
-                                    } else {
-                                        console.error('OpenAI TTS error:', ttsResponse?.error);
-                                        // Resume video on error only if it was paused
-                                        if (pauseAdButton) {
+                                
+                                const speakerBtn = sidebar.querySelector(`#ad-speaker-btn-${adIndex}`);
+                                const audioUrl = speakerBtn.getAttribute('data-audio-url');
+
+                                if (audioUrl) {
+                                    playAudioFromDataUrl(audioUrl, speakerBtn, () => {
+                                        console.log('[AD] AD audio ended');
+                                        // Always resume after first AD, then respect pause-during-ad setting
+                                        if (adIndex === 0 || pauseAdButton) {
+                                            console.log('[AD] Resuming video');
                                             video.play();
                                         }
-                                    }
-                                });
+                                    });
+                                } else {
+                                    chrome.runtime.sendMessage({
+                                        type: 'CALL_OPENAI_TTS',
+                                        text: nextAd.description,
+                                        gender: gender
+                                    }, (ttsResponse) => {
+                                        if (ttsResponse && ttsResponse.success) {
+                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn, () => {
+                                                console.log('[AD] AD audio ended');
+                                                // Always resume after first AD, then respect pause-during-ad setting
+                                                if (adIndex === 0 || pauseAdButton) {
+                                                    console.log('[AD] Resuming video');
+                                                    video.play();
+                                                }
+                                            });
+                                        } else {
+                                            console.error('OpenAI TTS error:', ttsResponse?.error);
+                                            // Resume video on error only if it was paused
+                                            if (pauseAdButton) {
+                                                video.play();
+                                            }
+                                        }
+                                    });
+                                }
                             }
                         }
                     });
@@ -1183,11 +1287,13 @@
                 if (timeWindowSlider && timeWindowValue) {
                     timeWindowSlider.addEventListener('input', (e) => {
                         const value = e.target.value;
-                        if (value % 60 === 0) {
+                        if (value >= 60 && value % 60 === 0) {
                             const minutes = value / 60;
                             timeWindowValue.textContent = `${minutes}min`;
+                            timeWindowSlider.setAttribute('aria-label', `Time Window ${minutes}m`);
                         } else {
                             timeWindowValue.textContent = `${value}s`;
+                            timeWindowSlider.setAttribute('aria-label', `Time Window ${value}s`);
                         }
                     });
                 }
@@ -1225,6 +1331,7 @@
 
                             const userSpeakerBtn = document.createElement('button');
                             setButtonToSpeakerIcon(userSpeakerBtn);
+                            userSpeakerBtn.setAttribute('data-text', question);
                             userSpeakerBtn.style.background = 'none';
                             userSpeakerBtn.style.border = 'none';
                             userSpeakerBtn.style.fontSize = '18px';
@@ -1246,7 +1353,12 @@
                                 }
                                 const genderBtnUser = sidebar.querySelector('#vqa-tab .pill-button[data-gender].active');
                                 const genderUser = genderBtnUser ? genderBtnUser.dataset.gender : 'female';
-                                if (textToSpeak) {
+                                const textToSpeak = thisButton.getAttribute('data-text');
+                                const audioUrl = thisButton.getAttribute('data-audio-url');
+
+                                if (audioUrl) {
+                                    playAudioFromDataUrl(audioUrl, thisButton);
+                                } else if (textToSpeak) {
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
                                         text: textToSpeak,
@@ -1273,6 +1385,10 @@
                             userMessageContainer.appendChild(userSpeakerBtn);
                             userMessageContainer.appendChild(userMessage);
                             chatMessages.appendChild(userMessageContainer);
+
+                            const genderBtnUser = sidebar.querySelector('#vqa-tab .pill-button[data-gender].active');
+                            const genderUser = genderBtnUser ? genderBtnUser.dataset.gender : 'female';
+                            preloadAndStoreAudio(question, userSpeakerBtn, genderUser);
 
                             chatInput.value = '';
                             chatInput.style.height = 'auto'; // Reset height
@@ -1316,9 +1432,13 @@
                                 }
 
                                 const textToSpeak = aiTextSpan.textContent;
+                                const audioUrl = thisButton.getAttribute('data-audio-url');
                                 const genderBtnAI = sidebar.querySelector('#vqa-tab .pill-button[data-gender].active');
                                 const genderAI = genderBtnAI ? genderBtnAI.dataset.gender : 'female';
-                                if (textToSpeak && textToSpeak !== 'Thinking...') {
+
+                                if (audioUrl) {
+                                    playAudioFromDataUrl(audioUrl, thisButton);
+                                } else if (textToSpeak && textToSpeak !== 'Thinking...') {
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
                                         text: textToSpeak,
@@ -1402,10 +1522,13 @@ Please analyze the video frames provided and answer their question about what's 
                                         console.log('Received response from background:', response);
                                         if (response && response.success) {
                                             aiTextSpan.textContent = response.text;
+                                            speakerBtn.setAttribute('data-text', response.text);
                                             speakerBtn.style.opacity = '1';
                                             
                                             const genderBtnResp = sidebar.querySelector('.pill-button[data-gender].active');
                                             const genderResp = genderBtnResp ? genderBtnResp.dataset.gender : 'female';
+                                            preloadAndStoreAudio(response.text, speakerBtn, genderResp);
+
                                             chrome.runtime.sendMessage({
                                                 type: 'CALL_OPENAI_TTS',
                                                 text: response.text,

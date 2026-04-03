@@ -90,16 +90,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })();
     
     return true;
-  } else if (request.type === 'CALL_OPENAI_TTS') {
-    console.log('[BG] Processing CALL_OPENAI_TTS');
+  } else if (request.type === 'CALL_OPENAI_TTS' || request.type === 'PRELOAD_OPENAI_TTS') {
+    console.log(`[BG] Processing ${request.type}`);
     
     (async () => {
       try {
-        const audioDataUrl = await callOpenAI_TTS_API(request.text, request.gender);
-        sendResponse({ success: true, audioDataUrl: audioDataUrl });
+        const audioDataUrl = await getOpenAI_TTS_API(request.text, request.gender);
+        sendResponse({ success: true, audioDataUrl: audioDataUrl, text: request.text });
       } catch (error) {
         console.error('[BG] Error:', error);
-        sendResponse({ success: false, error: error.message });
+        sendResponse({ success: false, error: error.message, text: request.text });
       }
     })();
     
@@ -122,7 +122,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-async function callOpenAI_TTS_API(text, gender) {
+async function getOpenAI_TTS_API(text, gender) {
   let apiKey = '';
   try {
     console.log('[OpenAI TTS] Fetching API key...');
