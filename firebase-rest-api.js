@@ -1,39 +1,44 @@
 // Firebase REST API - handles auth and database operations without SDK
 // This can be loaded as a regular script in extension contexts
 
-let currentUser = null;
-let idToken = null;
+try {
+  console.log('[FirebaseAPI] Starting to load...');
+  console.log('[FirebaseAPI] window.firebaseConfig:', window.firebaseConfig);
 
-window.FirebaseAPI = {
-  async signupWithEmail(email, password, role) {
-    try {
-      const response = await fetch(
-        `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${window.firebaseConfig.apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email, password,
-            returnSecureToken: true
-          })
-        }
-      );
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error?.message || 'Signup failed');
+  let currentUser = null;
+  let idToken = null;
 
-      idToken = data.idToken;
-      currentUser = { uid: data.localId, email };
-      await this.createUserDocument(data.localId, email, role);
-      return { success: true, user: { email, role }, uid: data.localId };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  },
+  window.FirebaseAPI = {
+    async signupWithEmail(email, password, role) {
+      try {
+        console.log('[FirebaseAPI.signup] Starting signup for:', email);
+        const response = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${window.firebaseConfig.apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email, password,
+              returnSecureToken: true
+            })
+          }
+        );
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error?.message || 'Signup failed');
 
-  async loginWithEmail(email, password) {
-    try {
-      const response = await fetch(
-        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${window.firebaseConfig.apiKey}`,
+        idToken = data.idToken;
+        currentUser = { uid: data.localId, email };
+        await this.createUserDocument(data.localId, email, role);
+        return { success: true, user: { email, role }, uid: data.localId };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
+
+    async loginWithEmail(email, password) {
+      try {
+        const response = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${window.firebaseConfig.apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -180,5 +185,180 @@ window.FirebaseAPI = {
       else if (f.arrayValue) obj[k] = f.arrayValue.values.map(v => this.fromFirestore(v));
     }
     return obj;
+  },
+
+  // Save video document with AD data
+  async saveVideoAD(videoUrl, videoLength, customizations, generatedAds) {
+    if (!currentUser || !idToken) return { success: false, error: 'Not logged in' };
+    try {
+      const videoDocId = this.createVideoDocId(currentUser.uid, videoUrl);
+      const timestamp = new Date().toISOString();
+      
+      // Create/update video doc
+      const videoData = {
+        fields: {
+          userId: { stringValue: currentUser.uid },
+          videoLink: { stringValue: videoUrl },
+          videoLength: { integerValue: String(videoLength) },
+          updatedAt: { timestampValue: timestamp }
+        }
+      };
+      
+      await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}?key=${window.firebaseConfig.apiKey}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+          body: JSON.stringify(videoData)
+        }
+      );
+
+      // Save AD document (overwrite 'current')
+      const adData = { fields: {} };
+      adData.fields.timestamp = { integerValue: String(Date.now()) };
+      adData.fields.customizations = this.objectToFirestore(customizations);
+      adData.fields.generatedAds = { arrayValue: { values: generatedAds.map(ad => ({
+        mapValue: { fields: {
+          timestamp_in_seconds: { integerValue: String(ad.timestamp_in_seconds) },
+          description: { stringValue: ad.description }
+        }}
+      })) }};
+      adData.fields.createdAt = { timestampValue: timestamp };
+
+      await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}/audioDescriptions/current?key=${window.firebaseConfig.apiKey}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+          body: JSON.stringify(adData)
+        }
+      );
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Load video AD data
+  async loadVideoAD(videoUrl) {
+    if (!currentUser || !idToken) return null;
+    try {
+      const videoDocId = this.createVideoDocId(currentUser.uid, videoUrl);
+      const response = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}/audioDescriptions/current?key=${window.firebaseConfig.apiKey}`,
+        { headers: { 'Authorization': `Bearer ${idToken}` } }
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data.fields ? this.fromFirestore(data.fields) : null;
+    } catch (error) {
+      return null;
+    }
+  },
+
+  // Save VQA data
+  async saveVideoVQA(videoUrl, videoLength, customizations, messages) {
+    if (!currentUser || !idToken) return { success: false, error: 'Not logged in' };
+    try {
+      const videoDocId = this.createVideoDocId(currentUser.uid, videoUrl);
+      const timestamp = new Date().toISOString();
+      
+      // Create/update video doc
+      const videoData = {
+        fields: {
+          userId: { stringValue: currentUser.uid },
+          videoLink: { stringValue: videoUrl },
+          videoLength: { integerValue: String(videoLength) },
+          updatedAt: { timestampValue: timestamp }
+        }
+      };
+      
+      await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}?key=${window.firebaseConfig.apiKey}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+          body: JSON.stringify(videoData)
+        }
+      );
+
+      // Save VQA document
+      const vqaData = { fields: {} };
+      vqaData.fields.timestamp = { integerValue: String(Date.now()) };
+      vqaData.fields.customizations = this.objectToFirestore(customizations);
+      vqaData.fields.messages = { arrayValue: { values: messages.map(msg => ({
+        mapValue: { fields: {
+          role: { stringValue: msg.role },
+          content: { stringValue: msg.content },
+          timestamp: { integerValue: String(msg.timestamp) }
+        }}
+      })) }};
+      vqaData.fields.createdAt = { timestampValue: timestamp };
+
+      await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}/vqa/current?key=${window.firebaseConfig.apiKey}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+          body: JSON.stringify(vqaData)
+        }
+      );
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Load VQA data
+  async loadVideoVQA(videoUrl) {
+    if (!currentUser || !idToken) return null;
+    try {
+      const videoDocId = this.createVideoDocId(currentUser.uid, videoUrl);
+      const response = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}/vqa/current?key=${window.firebaseConfig.apiKey}`,
+        { headers: { 'Authorization': `Bearer ${idToken}` } }
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data.fields ? this.fromFirestore(data.fields) : null;
+    } catch (error) {
+      return null;
+    }
+  },
+
+  // Get user role
+  async getUserRoleById(userId) {
+    try {
+      const response = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/users/${userId}?key=${window.firebaseConfig.apiKey}`,
+        { headers: { 'Authorization': `Bearer ${idToken}` } }
+      );
+      if (!response.ok) return 'guest';
+      const data = await response.json();
+      return data.fields?.role?.stringValue || 'guest';
+    } catch (error) {
+      return 'guest';
+    }
+  },
+
+  createVideoDocId(userId, videoUrl) {
+    const urlHash = btoa(videoUrl).replace(/[+/=]/g, '').substring(0, 100);
+    return `${userId}_${urlHash}`.substring(0, 128);
+  },
+
+  objectToFirestore(obj) {
+    const fields = {};
+    for (const [k, v] of Object.entries(obj)) {
+      fields[k] = this.toFirestore(v);
+    }
+    return { mapValue: { fields } };
   }
 };
+
+console.log('[FirebaseAPI] Fully loaded:', !!window.FirebaseAPI);
+} catch (err) {
+  console.error('[FirebaseAPI] FATAL ERROR during loading:', err);
+  console.error('[FirebaseAPI] Stack:', err.stack);
+}

@@ -38,6 +38,7 @@
                 "login.html",
                 "firebase-rest-api.js",
                 "auth-ui.js",
+                "database-integration.js",
                 ".env",
                 "assets/activation.mp3"
             ],

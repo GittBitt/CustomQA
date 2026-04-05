@@ -144,6 +144,712 @@
                 sidebar.style.padding = "16px";
                 sidebar.style.marginBottom = "16px";
 
+                // Setup Firebase config and inline API
+                window.firebaseConfig = {
+                    apiKey: 'AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A',
+                    authDomain: 'customqa-cf40b.firebaseapp.com',
+                    projectId: 'customqa-cf40b',
+                    storageBucket: 'customqa-cf40b.firebasestorage.app',
+                    messagingSenderId: '44575669634',
+                    appId: '1:44575669634:web:313903337bbba65d3d239b',
+                    measurementId: 'G-GV9DDT0XB1'
+                };
+
+                // Inline Firebase REST API with persistent auth
+                let currentUser_FBAuth = null;
+                let idToken_FBAuth = null;
+
+                // Load persisted auth on initialization
+                const loadPersistedAuth = () => {
+                    const persisted = localStorage.getItem('customqa_auth');
+                    if (persisted) {
+                        try {
+                            const auth = JSON.parse(persisted);
+                            currentUser_FBAuth = auth.user;
+                            idToken_FBAuth = auth.token;
+                            return true;
+                        } catch (e) {
+                            console.error('Failed to load persisted auth:', e);
+                            return false;
+                        }
+                    }
+                    return false;
+                };
+
+                const savePersistedAuth = (user, token) => {
+                    localStorage.setItem('customqa_auth', JSON.stringify({ user, token }));
+                };
+
+                const clearPersistedAuth = () => {
+                    localStorage.removeItem('customqa_auth');
+                };
+
+                window.FirebaseAPI = {
+                    async loginWithEmail(email, password) {
+                        try {
+                            const response = await fetch(
+                                `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ email, password, returnSecureToken: true })
+                                }
+                            );
+                            const data = await response.json();
+                            if (!response.ok) throw new Error(data.error?.message || 'Login failed');
+
+                            idToken_FBAuth = data.idToken;
+                            
+                            // Use Firebase UID as primary document ID for reliability (never changes)
+                            currentUser_FBAuth = { uid: data.localId, email };
+                            
+                            // Fetch user role and custom ID from Firestore user document
+                            try {
+                                const userDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${data.localId}`;
+                                const userDocResponse = await fetch(
+                                    `https://firestore.googleapis.com/v1/${userDocPath}?key=${window.firebaseConfig.apiKey}`,
+                                    {
+                                        method: 'GET',
+                                        headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                    }
+                                );
+                                
+                                if (userDocResponse.ok) {
+                                    const userDocData = await userDocResponse.json();
+                                    const fields = userDocData.fields || {};
+                                    const role = fields.role?.stringValue || 'guest';
+                                    const customUserId = fields.customUserId?.stringValue || '';
+                                    
+                                    currentUser_FBAuth.role = role;
+                                    if (customUserId) currentUser_FBAuth.customUserId = customUserId;
+                                    
+                                    console.log('[CustomQA] Login successful for:', email, 'Role:', role, 'UID:', data.localId);
+                                } else {
+                                    console.warn('[CustomQA] Could not fetch user role from Firestore, defaulting to guest');
+                                    currentUser_FBAuth.role = 'guest';
+                                }
+                            } catch (roleError) {
+                                console.warn('[CustomQA] Error fetching user role:', roleError);
+                                currentUser_FBAuth.role = 'guest';
+                            }
+                            
+                            savePersistedAuth(currentUser_FBAuth, idToken_FBAuth);
+                            return { success: true, user: { email, role: currentUser_FBAuth.role }, uid: data.localId };
+                        } catch (error) {
+                            console.error('[CustomQA] Login error:', error);
+                            return { success: false, error: error.message };
+                        }
+                    },
+
+                    async signupWithEmail(email, password, role) {
+                        try {
+                            const response = await fetch(
+                                `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ email, password, returnSecureToken: true })
+                                }
+                            );
+                            const data = await response.json();
+                            if (!response.ok) throw new Error(data.error?.message || 'Signup failed');
+
+                            idToken_FBAuth = data.idToken;
+                            
+                            // Use Firebase UID as document ID (reliable, never changes)
+                            // Generate friendly custom ID to store in document: "username_timestamp"
+                            const username = email.split('@')[0];
+                            const customUserId = `${username}_${Date.now()}`;
+                            
+                            currentUser_FBAuth = { uid: data.localId, email, role };
+                            savePersistedAuth(currentUser_FBAuth, idToken_FBAuth);
+
+                            // Create user profile documents using Firebase UID, store custom ID as field
+                            await this.createUserProfileDocuments(data.localId, email, role, idToken_FBAuth, customUserId);
+
+                            return { success: true, user: { email, role }, uid: data.localId };
+                        } catch (error) {
+                            return { success: false, error: error.message };
+                        }
+                    },
+
+                    async createUserProfileDocuments(userId, email, role, token, customUserId) {
+                        const timestamp = new Date().toISOString();
+                        
+                        try {
+                            // Create users/{userId} document with all settings fields in the main document
+                            console.log('Creating user document for:', userId, 'Custom ID:', customUserId);
+                            const userDocResponse = await fetch(
+                                `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Authorization': `Bearer ${token}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({
+                                        fields: {
+                                            email: { stringValue: email },
+                                            customUserId: { stringValue: customUserId },
+                                            role: { stringValue: role || 'guest' },
+                                            // User-wide settings (persist across all videos)
+                                            adVolume: { integerValue: 50 },
+                                            adSpeed: { integerValue: 50 },
+                                            adGender: { stringValue: 'female' },
+                                            adVoice: { stringValue: 'natural' },
+                                            adLength: { integerValue: 25 },
+                                            adFrequency: { stringValue: 'sometimes' },
+                                            adEmphasis: { stringValue: 'balanced' },
+                                            adColorPreference: { stringValue: 'on' },
+                                            adNarrationStyle: { stringValue: 'objective' },
+                                            adPauseDuringAd: { booleanValue: true },
+                                            vqaVolume: { integerValue: 50 },
+                                            vqaSpeed: { integerValue: 50 },
+                                            vqaGender: { stringValue: 'female' },
+                                            vqaLength: { integerValue: 25 },
+                                            createdAt: { timestampValue: timestamp },
+                                            updatedAt: { timestampValue: timestamp }
+                                        }
+                                    })
+                                }
+                            );
+                            const userDocData = await userDocResponse.json();
+                            if (!userDocResponse.ok) {
+                                console.error('Failed to create user document:', userDocData.error?.message || JSON.stringify(userDocData));
+                            } else {
+                                console.log('User document created successfully with custom ID:', customUserId);
+                            }
+                        } catch (error) {
+                            console.error('Error creating user profile documents:', error);
+                        }
+                    },
+
+                    async logout() {
+                        currentUser_FBAuth = null;
+                        idToken_FBAuth = null;
+                        clearPersistedAuth();
+                        return { success: true };
+                    },
+
+                    getCurrentUser() {
+                        return currentUser_FBAuth;
+                    },
+
+                    async loadSettings(userId) {
+                        if (!idToken_FBAuth) return null;
+                        try {
+                            const response = await fetch(
+                                `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'GET',
+                                    headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                }
+                            );
+                            // 404 is ok - document might not exist yet
+                            if (response.status === 404) return null;
+                            if (!response.ok) {
+                                console.error('Load settings error:', response.status);
+                                return null;
+                            }
+                            const data = await response.json();
+                            if (data.fields) {
+                                return {
+                                    // AD settings
+                                    adVolume: parseInt(data.fields.adVolume?.integerValue || 50),
+                                    adSpeed: parseInt(data.fields.adSpeed?.integerValue || 50),
+                                    adGender: data.fields.adGender?.stringValue || 'female',
+                                    adVoice: data.fields.adVoice?.stringValue || 'natural',
+                                    adLength: parseInt(data.fields.adLength?.integerValue || 25),
+                                    adFrequency: data.fields.adFrequency?.stringValue || 'sometimes',
+                                    adEmphasis: data.fields.adEmphasis?.stringValue || 'balanced',
+                                    adColorPreference: data.fields.adColorPreference?.stringValue || 'on',
+                                    adNarrationStyle: data.fields.adNarrationStyle?.stringValue || 'objective',
+                                    adPauseDuringAd: data.fields.adPauseDuringAd?.booleanValue ?? true,
+                                    // VQA settings
+                                    vqaVolume: parseInt(data.fields.vqaVolume?.integerValue || 50),
+                                    vqaSpeed: parseInt(data.fields.vqaSpeed?.integerValue || 50),
+                                    vqaGender: data.fields.vqaGender?.stringValue || 'female',
+                                    vqaLength: parseInt(data.fields.vqaLength?.integerValue || 25)
+                                };
+                            }
+                            return null;
+                        } catch (error) {
+                            console.error('Error loading settings:', error);
+                            return null;
+                        }
+                    },
+
+                    async saveSettings(userId, settings) {
+                        if (!idToken_FBAuth) return false;
+                        try {
+                            const docPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}`;
+                            
+                            const response = await fetch(
+                                `https://firestore.googleapis.com/v1/${docPath}?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Authorization': `Bearer ${idToken_FBAuth}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({
+                                        fields: {
+                                            // AD settings
+                                            adVolume: { integerValue: parseInt(settings.adVolume || 50) },
+                                            adSpeed: { integerValue: parseInt(settings.adSpeed || 50) },
+                                            adGender: { stringValue: settings.adGender || 'female' },
+                                            adVoice: { stringValue: settings.adVoice || 'natural' },
+                                            adLength: { integerValue: parseInt(settings.adLength || 25) },
+                                            adFrequency: { stringValue: settings.adFrequency || 'sometimes' },
+                                            adEmphasis: { stringValue: settings.adEmphasis || 'balanced' },
+                                            adColorPreference: { stringValue: settings.adColorPreference || 'on' },
+                                            adNarrationStyle: { stringValue: settings.adNarrationStyle || 'objective' },
+                                            adPauseDuringAd: { booleanValue: settings.adPauseDuringAd ?? true },
+                                            // VQA settings
+                                            vqaVolume: { integerValue: parseInt(settings.vqaVolume || 50) },
+                                            vqaSpeed: { integerValue: parseInt(settings.vqaSpeed || 50) },
+                                            vqaGender: { stringValue: settings.vqaGender || 'female' },
+                                            vqaLength: { integerValue: parseInt(settings.vqaLength || 25) },
+                                            updatedAt: { timestampValue: new Date().toISOString() }
+                                        }
+                                    })
+                                }
+                            );
+                            const data = await response.json();
+                            if (!response.ok) {
+                                console.error('Save settings error:', data.error?.message || JSON.stringify(data));
+                                return false;
+                            }
+                            console.log('Settings saved successfully');
+                            return true;
+                        } catch (error) {
+                            console.error('Error saving settings:', error);
+                            return false;
+                        }
+                    },
+
+                    generateDocumentId() {
+                        return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    },
+
+                    async ensureVideoDocumentExists(userId, videoId, videoLink, videoLength, token, videoTitle = '') {
+                        try {
+                            console.log('Ensuring video document exists for:', videoId, 'Title:', videoTitle);
+                            const timestamp = new Date().toISOString();
+                            const videoDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}`;
+                            
+                            const response = await fetch(
+                                `https://firestore.googleapis.com/v1/${videoDocPath}?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Authorization': `Bearer ${token || idToken_FBAuth}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({
+                                        fields: {
+                                            videoLink: { stringValue: videoLink },
+                                            videoTitle: { stringValue: videoTitle },
+                                            videoLength: { doubleValue: videoLength },
+                                            createdAt: { timestampValue: timestamp },
+                                            updatedAt: { timestampValue: timestamp }
+                                        }
+                                    })
+                                }
+                            );
+                            const data = await response.json();
+                            if (!response.ok) {
+                                console.error('Failed to ensure video document:', data.error?.message || JSON.stringify(data));
+                                return false;
+                            }
+                            console.log('Video document ready:', videoId);
+                            return true;
+                        } catch (error) {
+                            console.error('Error ensuring video document:', error);
+                            return false;
+                        }
+                    },
+
+                    async loadGeneratedAD(userId, videoId) {
+                        if (!idToken_FBAuth) return null;
+                        try {
+                            // Load all AD documents from the audioDescriptions subcollection
+                            const listResponse = await fetch(
+                                `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/audioDescriptions?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'GET',
+                                    headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                }
+                            );
+                            
+                            if (listResponse.status === 404) return null;
+                            if (!listResponse.ok) {
+                                console.error('Load AD list error:', listResponse.status);
+                                return null;
+                            }
+                            
+                            const listData = await listResponse.json();
+                            const documents = listData.documents || [];
+                            
+                            // Return the most recent AD document
+                            if (documents.length > 0) {
+                                const latestDoc = documents[documents.length - 1];
+                                const fields = latestDoc.fields || {};
+                                
+                                // Parse customizations
+                                let customizations = {};
+                                if (fields.customizations?.stringValue) {
+                                    try {
+                                        customizations = JSON.parse(fields.customizations.stringValue);
+                                    } catch (e) {
+                                        console.warn('Failed to parse customizations:', e);
+                                    }
+                                }
+                                
+                                // Parse generated ADs - they're stored as array of stringValues
+                                let generatedAds = [];
+                                if (fields.generatedAds?.arrayValue?.values) {
+                                    generatedAds = fields.generatedAds.arrayValue.values.map(val => {
+                                        if (val.stringValue) {
+                                            try {
+                                                return JSON.parse(val.stringValue);
+                                            } catch (e) {
+                                                console.warn('Failed to parse AD:', e);
+                                                return { timestamp_in_seconds: 0, description: val.stringValue };
+                                            }
+                                        }
+                                        return val;
+                                    });
+                                }
+                                
+                                return {
+                                    customizations: customizations,
+                                    generatedAds: generatedAds,
+                                    timestamp: fields.timestamp?.integerValue || Date.now(),
+                                    createdAt: fields.createdAt?.timestampValue || new Date().toISOString()
+                                };
+                            }
+                            return null;
+                        } catch (error) {
+                            console.error('Error loading AD:', error);
+                            return null;
+                        }
+                    },
+
+                    async saveGeneratedAD(userId, videoId, videoLink, videoLength, customizations, generatedAds) {
+                        if (!idToken_FBAuth) return false;
+                        try {
+                            // Extract video title from page
+                            const titleElement = document.querySelector('h1.ytd-video-primary-info-renderer') || 
+                                               document.querySelector('h1 yt-formatted-string') ||
+                                               document.querySelector('yt-formatted-string.heading') ||
+                                               document.querySelector('h1');
+                            const videoTitle = titleElement ? titleElement.textContent.trim() : 'Unknown Title';
+                            
+                            // First ensure the video document exists with title
+                            await this.ensureVideoDocumentExists(userId, videoId, videoLink, videoLength, idToken_FBAuth, videoTitle);
+                            
+                            // Generate a unique document ID for this AD generation
+                            const adDocId = this.generateDocumentId();
+                            const timestamp = new Date().toISOString();
+                            
+                            console.log('Saving AD to subcollection:', adDocId);
+                            const adDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/audioDescriptions/${adDocId}`;
+                            
+                            const response = await fetch(
+                                `https://firestore.googleapis.com/v1/${adDocPath}?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Authorization': `Bearer ${idToken_FBAuth}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({
+                                        fields: {
+                                            customizations: { stringValue: JSON.stringify(customizations) },
+                                            generatedAds: { arrayValue: { values: generatedAds.map(ad => ({ stringValue: JSON.stringify(ad) })) } },
+                                            timestamp: { integerValue: Date.now() },
+                                            createdAt: { timestampValue: timestamp }
+                                        }
+                                    })
+                                }
+                            );
+                            const data = await response.json();
+                            if (!response.ok) {
+                                console.error('Save AD error:', data.error?.message || JSON.stringify(data));
+                                return false;
+                            }
+                            console.log('AD saved successfully:', adDocId);
+                            return true;
+                        } catch (error) {
+                            console.error('Error saving AD:', error);
+                            return false;
+                        }
+                    },
+
+                    async loadGeneratedVQA(userId, videoId) {
+                        if (!idToken_FBAuth) return null;
+                        try {
+                            // Load all VQA documents from the vqa subcollection
+                            const listResponse = await fetch(
+                                `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'GET',
+                                    headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                }
+                            );
+                            
+                            if (listResponse.status === 404) return null;
+                            if (!listResponse.ok) {
+                                console.error('Load VQA list error:', listResponse.status);
+                                return null;
+                            }
+                            
+                            const listData = await listResponse.json();
+                            const documents = listData.documents || [];
+                            
+                            // Return the most recent VQA document
+                            if (documents.length > 0) {
+                                const latestDoc = documents[documents.length - 1];
+                                const fields = latestDoc.fields || {};
+                                
+                                // Parse customizations
+                                let customizations = {};
+                                if (fields.customizations?.stringValue) {
+                                    try {
+                                        customizations = JSON.parse(fields.customizations.stringValue);
+                                    } catch (e) {
+                                        console.warn('Failed to parse VQA customizations:', e);
+                                    }
+                                }
+                                
+                                // Parse messages - they're stored as array of stringValues
+                                let messages = [];
+                                if (fields.messages?.arrayValue?.values) {
+                                    messages = fields.messages.arrayValue.values.map(val => {
+                                        if (val.stringValue) {
+                                            try {
+                                                return JSON.parse(val.stringValue);
+                                            } catch (e) {
+                                                console.warn('Failed to parse message:', e);
+                                                return { role: 'assistant', content: val.stringValue };
+                                            }
+                                        }
+                                        return val;
+                                    });
+                                }
+                                
+                                return {
+                                    customizations: customizations,
+                                    messages: messages,
+                                    timestamp: fields.timestamp?.integerValue || Date.now(),
+                                    createdAt: fields.createdAt?.timestampValue || new Date().toISOString()
+                                };
+                            }
+                            return null;
+                        } catch (error) {
+                            console.error('Error loading VQA:', error);
+                            return null;
+                        }
+                    },
+
+                    async saveGeneratedVQA(userId, videoId, videoLink, videoLength, customizations, messages) {
+                        if (!idToken_FBAuth) return false;
+                        try {
+                            // Extract video title from page
+                            const titleElement = document.querySelector('h1.ytd-video-primary-info-renderer') || 
+                                               document.querySelector('h1 yt-formatted-string') ||
+                                               document.querySelector('yt-formatted-string.heading') ||
+                                               document.querySelector('h1');
+                            const videoTitle = titleElement ? titleElement.textContent.trim() : 'Unknown Title';
+                            
+                            // First ensure the video document exists with title
+                            await this.ensureVideoDocumentExists(userId, videoId, videoLink, videoLength, idToken_FBAuth, videoTitle);
+                            
+                            // Generate a unique document ID for this VQA generation
+                            const vqaDocId = this.generateDocumentId();
+                            const timestamp = new Date().toISOString();
+                            
+                            console.log('Saving VQA to subcollection:', vqaDocId);
+                            const vqaDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/${vqaDocId}`;
+                            
+                            const response = await fetch(
+                                `https://firestore.googleapis.com/v1/${vqaDocPath}?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Authorization': `Bearer ${idToken_FBAuth}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({
+                                        fields: {
+                                            customizations: { stringValue: JSON.stringify(customizations) },
+                                            messages: { arrayValue: { values: messages.map(m => ({ stringValue: JSON.stringify(m) })) } },
+                                            timestamp: { integerValue: Date.now() },
+                                            createdAt: { timestampValue: timestamp }
+                                        }
+                                    })
+                                }
+                            );
+                            const data = await response.json();
+                            if (!response.ok) {
+                                console.error('Save VQA error:', data.error?.message || JSON.stringify(data));
+                                return false;
+                            }
+                            console.log('VQA saved successfully:', vqaDocId);
+                            return true;
+                        } catch (error) {
+                            console.error('Error saving VQA:', error);
+                            return false;
+                        }
+                    },
+
+                    async saveADSettings(userId, settings) {
+                        return await this.saveSettings(userId, settings);
+                    },
+
+                    async saveVQASettings(userId, settings) {
+                        return await this.saveSettings(userId, settings);
+                    },
+
+                    async getUserRole(userId) {
+                        const settings = await this.loadSettings(userId);
+                        return settings?.role || 'guest';
+                    }
+                };
+
+                // Create database integration wrapper
+                window.DatabaseIntegration = {
+                    async loadUserSettings() {
+                        const user = currentUser_FBAuth;
+                        if (!user) return null;
+                        return await window.FirebaseAPI.loadSettings(user.uid);
+                    },
+
+                    async restoreSettingsToUI(sidebar, settings) {
+                        if (!sidebar || !settings) return;
+                        
+                        // Restore AD settings
+                        if (settings.adVolume) {
+                            const volSlider = sidebar.querySelector('#ad-volume-slider');
+                            if (volSlider) volSlider.value = settings.adVolume;
+                        }
+                        if (settings.adSpeed) {
+                            const speedSlider = sidebar.querySelector('#ad-speed-slider');
+                            if (speedSlider) speedSlider.value = settings.adSpeed;
+                        }
+                        if (settings.adGender) {
+                            const genderBtn = sidebar.querySelector(`#audio-descriptions-tab .pill-button[data-gender="${settings.adGender}"]`);
+                            if (genderBtn) {
+                                sidebar.querySelectorAll('#audio-descriptions-tab .pill-button[data-gender]').forEach(b => b.classList.remove('active'));
+                                genderBtn.classList.add('active');
+                            }
+                        }
+                        if (settings.adLength) {
+                            const lengthSlider = sidebar.querySelector('#length-slider');
+                            if (lengthSlider) lengthSlider.value = settings.adLength;
+                        }
+                        
+                        // Restore VQA settings
+                        if (settings.vqaVolume) {
+                            const vqaVolSlider = sidebar.querySelector('#vqa-volume-slider');
+                            if (vqaVolSlider) vqaVolSlider.value = settings.vqaVolume;
+                        }
+                        if (settings.vqaSpeed) {
+                            const vqaSpeedSlider = sidebar.querySelector('#vqa-speed-slider');
+                            if (vqaSpeedSlider) vqaSpeedSlider.value = settings.vqaSpeed;
+                        }
+                        if (settings.vqaGender) {
+                            const vqaGenderBtn = sidebar.querySelector(`#vqa-tab .pill-button[data-gender="${settings.vqaGender}"]`);
+                            if (vqaGenderBtn) {
+                                sidebar.querySelectorAll('#vqa-tab .pill-button[data-gender]').forEach(b => b.classList.remove('active'));
+                                vqaGenderBtn.classList.add('active');
+                            }
+                        }
+                        if (settings.vqaLength) {
+                            const vqaLenSlider = sidebar.querySelector('[id*="time-window"]');
+                            if (vqaLenSlider) vqaLenSlider.value = settings.vqaLength;
+                        }
+                    },
+
+                    async loadGeneratedAD(videoUrl) {
+                        const user = currentUser_FBAuth;
+                        if (!user) return null;
+                        const videoId = videoUrl.split('v=')[1]?.split('&')[0] || videoUrl;
+                        return await window.FirebaseAPI.loadGeneratedAD(user.uid, videoId);
+                    },
+
+                    async loadGeneratedVQA(videoUrl) {
+                        const user = currentUser_FBAuth;
+                        if (!user) return null;
+                        const videoId = videoUrl.split('v=')[1]?.split('&')[0] || videoUrl;
+                        return await window.FirebaseAPI.loadGeneratedVQA(user.uid, videoId);
+                    },
+
+                    async saveGeneratedAD(videoUrl, duration, settings, ads) {
+                        const user = currentUser_FBAuth;
+                        if (!user) return false;
+                        const videoId = videoUrl.split('v=')[1]?.split('&')[0] || videoUrl;
+                        return await window.FirebaseAPI.saveGeneratedAD(user.uid, videoId, videoUrl, duration, settings, ads);
+                    },
+
+                    async saveGeneratedVQA(videoUrl, duration, settings, messages) {
+                        const user = currentUser_FBAuth;
+                        if (!user) return false;
+                        const videoId = videoUrl.split('v=')[1]?.split('&')[0] || videoUrl;
+                        return await window.FirebaseAPI.saveGeneratedVQA(user.uid, videoId, videoUrl, duration, settings, messages);
+                    },
+
+                    async saveADSettings(settings) {
+                        const user = currentUser_FBAuth;
+                        if (!user) return false;
+                        return await window.FirebaseAPI.saveADSettings(user.uid, settings);
+                    },
+
+                    async saveVQASettings(settings) {
+                        const user = currentUser_FBAuth;
+                        if (!user) return false;
+                        return await window.FirebaseAPI.saveVQASettings(user.uid, settings);
+                    },
+
+                    async getUserRole() {
+                        const user = currentUser_FBAuth;
+                        if (!user) return 'guest';
+                        return await window.FirebaseAPI.getUserRole(user.uid);
+                    }
+                };
+
+                // Load persisted auth on init
+                loadPersistedAuth();
+
+                console.log('FirebaseAPI ready:', !!window.FirebaseAPI);
+
+                // Plugin initialization: Verify logged-in user and their associated videos
+                (async () => {
+                    const user = window.FirebaseAPI?.getCurrentUser();
+                    if (user) {
+                        console.log('[CustomQA] ✓ User logged in:', {
+                            uid: user.uid,
+                            email: user.email,
+                            role: user.role || 'guest'
+                        });
+
+                        // Try to load user settings to verify Firestore access
+                        try {
+                            const settings = await window.DatabaseIntegration?.loadUserSettings();
+                            if (settings) {
+                                console.log('[CustomQA] ✓ User settings loaded successfully');
+                            } else {
+                                console.warn('[CustomQA] ⚠ User settings not found or empty');
+                            }
+                        } catch (e) {
+                            console.error('[CustomQA] ✗ Error loading user settings:', e?.message);
+                        }
+                    } else {
+                        console.log('[CustomQA] ℹ No user logged in - user must login to see generated content');
+                    }
+                })();
+
                 // Fetch and inject HTML and CSS
                 const htmlUrl = chrome.runtime.getURL('sidebar.html');
                 const cssUrl = chrome.runtime.getURL('sidebar.css');
@@ -153,251 +859,415 @@
                     return;
                 }
 
-                console.log('htmlUrl:', htmlUrl);
-                console.log('cssUrl:', cssUrl);
-
                 const htmlResponse = await fetch(htmlUrl);
-                console.log('html response:', htmlResponse);
                 const html = await htmlResponse.text();
 
                 const cssResponse = await fetch(cssUrl);
-                console.log('css response:', cssResponse);
                 const css = await cssResponse.text();
 
                 const styleElement = document.createElement('style');
                 styleElement.textContent = css;
                 document.head.appendChild(styleElement);
 
-                // No SDK script needed - we'll use the REST API directly
-
                 sidebar.innerHTML = html;
 
-                // Setup avatar button click handler for auth menu
+                // Setup auth menu - attach to avatar button
                 const avatarBtn = sidebar.querySelector('#auth-avatar-btn');
-                const sidebarHeader = sidebar.querySelector('.sidebar-header');
-                
                 let authMenuOpen = false;
-                const FIREBASE_API_KEY = 'AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A';
-                const PROJECT_ID = 'customqa-cf40b';
                 
-                // Check if user is logged in
-                const checkAuthStatus = () => {
-                    const userId = sessionStorage.getItem('customqa_user_id');
-                    const email = sessionStorage.getItem('customqa_email');
-                    return { isLoggedIn: !!userId, userId, email };
-                };
-                
-                // Render auth menu based on login state
-                const renderAuthMenu = (authMenu) => {
-                    const { isLoggedIn, email } = checkAuthStatus();
+                if (avatarBtn) {
+                    const sidebarHeader = sidebar.querySelector('.sidebar-header');
+                    let authMenu = sidebar.querySelector('#auth-popup-menu');
                     
-                    if (isLoggedIn) {
-                        authMenu.innerHTML = `
-                            <div class="auth-popup-content">
-                                <div class="auth-popup-title">${email}</div>
-                                <div style="font-size: 12px; color: #666; margin-bottom: 12px;">Logged in</div>
-                                <button class="auth-popup-button auth-popup-secondary" id="popup-logout-btn" type="button">Logout</button>
-                            </div>
-                        `;
+                    if (!authMenu) {
+                        authMenu = document.createElement('div');
+                        authMenu.id = 'auth-popup-menu';
+                        authMenu.className = 'auth-popup-menu';
+                        sidebarHeader.appendChild(authMenu);
+                    }
+                    
+                    // Update avatar icon based on login state
+                    const updateAvatarIcon = () => {
+                        const user = window.FirebaseAPI?.getCurrentUser();
+                        avatarBtn.textContent = user ? '✓' : '👤';
+                        avatarBtn.title = user ? `Logged in as ${user.email}` : 'Login/Signup';
+                    };
+                    
+                    const renderAuthMenu = () => {
+                        const user = window.FirebaseAPI?.getCurrentUser();
+                        authMenu.innerHTML = '';
+                        updateAvatarIcon();
                         
-                        // Add logout handler
-                        const logoutBtn = authMenu.querySelector('#popup-logout-btn');
-                        logoutBtn.addEventListener('click', () => {
-                            sessionStorage.removeItem('customqa_user_id');
-                            sessionStorage.removeItem('customqa_id_token');
-                            sessionStorage.removeItem('customqa_email');
-                            sessionStorage.removeItem('customqa_role');
+                        if (user) {
+                            // Logged in
+                            authMenu.innerHTML = `
+                                <div class="auth-popup-content">
+                                    <div style="font-size: 14px; font-weight: 600;">${user.email}</div>
+                                    <div style="font-size: 12px; color: #666; margin-bottom: 12px;">${user.role || 'user'}</div>
+                                    <button id="logout-btn" class="auth-popup-button auth-popup-secondary">Logout</button>
+                                </div>
+                            `;
+                            authMenu.querySelector('#logout-btn').addEventListener('click', async () => {
+                                await window.FirebaseAPI.logout();
+                                location.reload();
+                            });
+                        } else {
+                            // Login/signup forms
+                            authMenu.innerHTML = `
+                                <div class="auth-popup-content">
+                                    <div id="login-form" style="display: flex; flex-direction: column; gap: 12px;">
+                                        <div class="auth-popup-title">Login</div>
+                                        <input type="email" id="login-email" class="auth-popup-input" placeholder="Email" />
+                                        <input type="password" id="login-password" class="auth-popup-input" placeholder="Password" />
+                                        <div id="login-error" style="color: #d32f2f; font-size: 12px; display: none;"></div>
+                                        <button id="login-btn" class="auth-popup-button">Login</button>
+                                        <button id="to-signup" class="auth-popup-button auth-popup-secondary">Sign Up</button>
+                                    </div>
+                                    <div id="signup-form" style="display: none; flex-direction: column; gap: 12px;">
+                                        <div class="auth-popup-title">Sign Up</div>
+                                        <input type="email" id="signup-email" class="auth-popup-input" placeholder="Email" />
+                                        <input type="password" id="signup-password" class="auth-popup-input" placeholder="Password" />
+                                        <input type="password" id="signup-confirm" class="auth-popup-input" placeholder="Confirm Password" />
+                                        <select id="signup-role" class="auth-popup-input">
+                                            <option value="control_tester">Control Tester</option>
+                                            <option value="experimental_tester">Experimental Tester</option>
+                                        </select>
+                                        <div id="signup-error" style="color: #d32f2f; font-size: 12px; display: none;"></div>
+                                        <button id="signup-btn" class="auth-popup-button">Sign Up</button>
+                                        <button id="to-login" class="auth-popup-button auth-popup-secondary">Login</button>
+                                    </div>
+                                </div>
+                            `;
                             
-                            authMenu.style.display = 'none';
-                            authMenuOpen = false;
-                            avatarBtn.textContent = '👤';
-                            avatarBtn.title = 'Login/Signup';
+                            const loginForm = authMenu.querySelector('#login-form');
+                            const signupForm = authMenu.querySelector('#signup-form');
                             
-                            alert('Logged out successfully');
-                            renderAuthMenu(authMenu);
-                        });
-                    } else {
-                        authMenu.innerHTML = `
-                            <div class="auth-popup-content">
-                                <div class="auth-popup-title">Login</div>
-                                <input type="email" id="popup-email" class="auth-popup-input" placeholder="Email" />
-                                <input type="password" id="popup-password" class="auth-popup-input" placeholder="Password" />
-                                <button class="auth-popup-button" id="popup-login-btn" type="button">Login</button>
-                                <div style="text-align: center; margin: 8px 0; font-size: 12px; color: #999;">OR</div>
-                                <a href="${chrome.runtime.getURL('signup.html')}" target="_blank" class="auth-popup-button auth-popup-secondary" style="text-align: center; text-decoration: none; display: block;">Sign Up</a>
-                            </div>
-                        `;
-                        
-                        // Add login button handler
-                        const loginBtn = authMenu.querySelector('#popup-login-btn');
-                        const emailInput = authMenu.querySelector('#popup-email');
-                        const passwordInput = authMenu.querySelector('#popup-password');
-
-                        loginBtn.addEventListener('click', async (e) => {
-                            e.preventDefault();
-                            const email = emailInput.value.trim();
-                            const password = passwordInput.value;
-
-                            if (!email || !password) {
-                                alert('Please enter email and password');
-                                return;
-                            }
-
-                            loginBtn.disabled = true;
-                            loginBtn.textContent = 'Logging in...';
-
-                            try {
-                                const response = await fetch(
-                                    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`,
-                                    {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                            email,
-                                            password,
-                                            returnSecureToken: true
-                                        })
+                            // Login
+                            authMenu.querySelector('#login-btn').addEventListener('click', async () => {
+                                const email = authMenu.querySelector('#login-email').value.trim();
+                                const password = authMenu.querySelector('#login-password').value;
+                                const error = authMenu.querySelector('#login-error');
+                                
+                                if (!email || !password) {
+                                    error.textContent = 'Email and password required';
+                                    error.style.display = 'block';
+                                    return;
+                                }
+                                
+                                if (!window.FirebaseAPI) {
+                                    error.textContent = 'FirebaseAPI not loaded. Try again.';
+                                    error.style.display = 'block';
+                                    console.error('FirebaseAPI not available');
+                                    return;
+                                }
+                                
+                                try {
+                                    const result = await window.FirebaseAPI.loginWithEmail(email, password);
+                                    if (result.success) {
+                                        // Update UI immediately without reload
+                                        renderAuthMenu();
+                                        authMenu.style.display = 'block';
+                                        // Then reload after a short delay to load settings
+                                        setTimeout(() => location.reload(), 500);
+                                    } else {
+                                        error.textContent = result.error || 'Login failed';
+                                        error.style.display = 'block';
                                     }
-                                );
-
-                                if (!response.ok) {
-                                    const errorData = await response.json();
-                                    throw new Error(errorData.error?.message || 'Login failed');
+                                } catch (err) {
+                                    error.textContent = 'Error: ' + err.message;
+                                    error.style.display = 'block';
+                                    console.error('Login error:', err);
                                 }
-
-                                const loginData = await response.json();
+                            });
+                            
+                            // Sign up
+                            authMenu.querySelector('#signup-btn').addEventListener('click', async () => {
+                                const email = authMenu.querySelector('#signup-email').value.trim();
+                                const password = authMenu.querySelector('#signup-password').value;
+                                const confirm = authMenu.querySelector('#signup-confirm').value;
+                                const role = authMenu.querySelector('#signup-role').value;
+                                const error = authMenu.querySelector('#signup-error');
                                 
-                                // Save session
-                                sessionStorage.setItem('customqa_user_id', loginData.localId);
-                                sessionStorage.setItem('customqa_id_token', loginData.idToken);
-                                sessionStorage.setItem('customqa_email', email);
-
-                                // Load user settings
-                                await loadUserSettings(loginData.localId);
-
-                                // Update UI
-                                authMenu.style.display = 'none';
-                                authMenuOpen = false;
-                                loginBtn.textContent = 'Logged in!';
+                                if (!email || !password || !confirm) {
+                                    error.textContent = 'All fields required';
+                                    error.style.display = 'block';
+                                    return;
+                                }
                                 
-                                setTimeout(() => {
-                                    avatarBtn.textContent = '✓';
-                                    avatarBtn.title = 'Logged in as ' + email;
-                                    renderAuthMenu(authMenu);
-                                }, 1000);
-
-                            } catch (error) {
-                                alert('Login failed: ' + error.message);
-                                loginBtn.disabled = false;
-                                loginBtn.textContent = 'Login';
-                            }
-                        });
-                    }
-                };
-                
-                avatarBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    authMenuOpen = !authMenuOpen;
-                    
-                    if (authMenuOpen) {
-                        let authMenu = sidebar.querySelector('#auth-popup-menu');
-                        if (!authMenu) {
-                            authMenu = document.createElement('div');
-                            authMenu.id = 'auth-popup-menu';
-                            authMenu.className = 'auth-popup-menu';
-                            sidebarHeader.appendChild(authMenu);
+                                if (password !== confirm) {
+                                    error.textContent = 'Passwords do not match';
+                                    error.style.display = 'block';
+                                    return;
+                                }
+                                
+                                if (password.length < 6) {
+                                    error.textContent = 'Password must be 6+ chars';
+                                    error.style.display = 'block';
+                                    return;
+                                }
+                                
+                                if (!window.FirebaseAPI) {
+                                    error.textContent = 'FirebaseAPI not loaded. Try again.';
+                                    error.style.display = 'block';
+                                    console.error('FirebaseAPI not available');
+                                    return;
+                                }
+                                
+                                try {
+                                    const result = await window.FirebaseAPI.signupWithEmail(email, password, role);
+                                    if (result.success) {
+                                        // Update UI immediately without reload
+                                        renderAuthMenu();
+                                        authMenu.style.display = 'block';
+                                        // Then reload after a short delay to load settings
+                                        setTimeout(() => location.reload(), 500);
+                                    } else {
+                                        error.textContent = result.error || 'Signup failed';
+                                        error.style.display = 'block';
+                                    }
+                                } catch (err) {
+                                    error.textContent = 'Error: ' + err.message;
+                                    error.style.display = 'block';
+                                    console.error('Signup error:', err);
+                                }
+                            });
+                            
+                            // Toggle forms
+                            authMenu.querySelector('#to-signup').addEventListener('click', () => {
+                                loginForm.style.display = 'none';
+                                signupForm.style.display = 'flex';
+                            });
+                            
+                            authMenu.querySelector('#to-login').addEventListener('click', () => {
+                                signupForm.style.display = 'none';
+                                loginForm.style.display = 'flex';
+                            });
                         }
-                        renderAuthMenu(authMenu);
-                        authMenu.style.display = 'block';
-                    } else {
-                        const authMenu = sidebar.querySelector('#auth-popup-menu');
-                        if (authMenu) {
+                    };
+                    
+                    // Click handler
+                    avatarBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        authMenuOpen = !authMenuOpen;
+                        if (authMenuOpen) {
+                            renderAuthMenu();
+                            authMenu.style.display = 'block';
+                        } else {
                             authMenu.style.display = 'none';
                         }
+                    });
+                    
+                    // Close on outside click
+                    document.addEventListener('click', (e) => {
+                        if (authMenuOpen && !authMenu.contains(e.target) && e.target !== avatarBtn) {
+                            authMenuOpen = false;
+                            authMenu.style.display = 'none';
+                        }
+                    });
+                    
+                    // Initial render
+                    renderAuthMenu();
+                }
+
+                // Load user settings if logged in
+                const user = window.FirebaseAPI?.getCurrentUser();
+                if (user && window.DatabaseIntegration) {
+                    const settings = await window.DatabaseIntegration.loadUserSettings();
+                    if (settings) {
+                        window.DatabaseIntegration.restoreSettingsToUI(sidebar, settings);
                     }
-                });
-                
-                // Load user settings from Firestore
-                const loadUserSettings = async (userId) => {
+                    
+                    // Load previous ADs for this video
+                    const videoUrl = window.location.href;
+                    const videoIdFromUrl = videoUrl.split('v=')[1]?.split('&')[0];
+                    console.log('[CustomQA] ========== VIDEO LOAD CHECK ==========');
+                    console.log('[CustomQA] Current user:', user?.uid, user?.email);
+                    console.log('[CustomQA] Video URL:', videoUrl);
+                    console.log('[CustomQA] Extracted Video ID:', videoIdFromUrl);
+                    
                     try {
-                        const adResponse = await fetch(
-                            `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${userId}/settings/audioDescription?key=${FIREBASE_API_KEY}`,
-                            { method: 'GET', headers: { 'Content-Type': 'application/json' } }
-                        );
-
-                        if (adResponse.ok) {
-                            const adData = await adResponse.json();
-                            const fields = adData.fields || {};
+                        const previousAD = await window.DatabaseIntegration.loadGeneratedAD(videoUrl);
+                        console.log('[CustomQA] AD Load Result:', previousAD ? 'SUCCESS' : 'NO DATA', previousAD);
+                        
+                        if (previousAD && previousAD.generatedAds && previousAD.generatedAds.length > 0) {
+                            console.log('[CustomQA] ✓ Displaying', previousAD.generatedAds.length, 'AD(s)');
                             
-                            // Restore AD settings
-                            if (fields.volume?.integerValue) {
-                                const vol = fields.volume.integerValue;
-                                const slider = sidebar.querySelector('#ad-volume-slider');
-                                if (slider) slider.value = vol;
+                            // Restore settings that were used when this AD was generated
+                            if (previousAD.customizations) {
+                                window.DatabaseIntegration.restoreSettingsToUI(sidebar, previousAD.customizations);
                             }
-                            if (fields.speed?.integerValue) {
-                                const spd = fields.speed.integerValue;
-                                const slider = sidebar.querySelector('#ad-speed-slider');
-                                if (slider) slider.value = spd;
-                            }
-                            if (fields.gender?.stringValue) {
-                                const gender = fields.gender.stringValue;
-                                const btn = sidebar.querySelector(`[data-gender="${gender}"]`);
-                                if (btn) {
-                                    sidebar.querySelectorAll('[data-gender]').forEach(b => b.classList.remove('active'));
-                                    btn.classList.add('active');
-                                }
-                            }
-                            if (fields.frequency?.stringValue) {
-                                const freq = fields.frequency.stringValue;
-                                const btn = sidebar.querySelector(`[data-frequency="${freq}"]`);
-                                if (btn) {
-                                    sidebar.querySelectorAll('[data-frequency]').forEach(b => b.classList.remove('active'));
-                                    btn.classList.add('active');
-                                }
-                            }
-                            if (fields.emphasis?.stringValue) {
-                                const emph = fields.emphasis.stringValue;
-                                const btn = sidebar.querySelector(`[data-emphasis="${emph}"]`);
-                                if (btn) {
-                                    sidebar.querySelectorAll('[data-emphasis]').forEach(b => b.classList.remove('active'));
-                                    btn.classList.add('active');
-                                }
-                            }
-                        }
-
-                        const vqaResponse = await fetch(
-                            `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${userId}/settings/vqa?key=${FIREBASE_API_KEY}`,
-                            { method: 'GET', headers: { 'Content-Type': 'application/json' } }
-                        );
-
-                        if (vqaResponse.ok) {
-                            const vqaData = await vqaResponse.json();
-                            const fields = vqaData.fields || {};
                             
-                            // Restore VQA settings
-                            if (fields.volume?.integerValue) {
-                                const vol = fields.volume.integerValue;
-                                const slider = sidebar.querySelector('#vqa-volume-slider');
-                                if (slider) slider.value = vol;
+                            // Helper function to format time
+                            const formatTimeHelper = (seconds) => {
+                                const mins = Math.floor(seconds / 60);
+                                const secs = Math.floor(seconds % 60);
+                                return `${mins}:${secs.toString().padStart(2, '0')}`;
+                            };
+                            
+                            // Display the ADs with full UI (speaker buttons, etc)
+                            const adMessages = sidebar.querySelector('#ad-messages');
+                            console.log('[CustomQA] AD container found:', !!adMessages);
+                            
+                            if (adMessages) {
+                                adMessages.innerHTML = '';
+                                const descriptions = previousAD.generatedAds;
+                                const gender = previousAD.customizations?.adGender || 'female';
+                                
+                                descriptions.forEach((desc, index) => {
+                                    const messageContainer = document.createElement('div');
+                                    messageContainer.style.display = 'flex';
+                                    messageContainer.style.alignItems = 'flex-start';
+                                    messageContainer.style.gap = '8px';
+                                    messageContainer.style.marginBottom = '12px';
+                                    
+                                    const currentTs = desc.timestamp_in_seconds;
+                                    const nextTs = descriptions[index + 1]?.timestamp_in_seconds || (video ? video.duration : 0);
+                                    const tsRange = `${formatTimeHelper(currentTs)} - ${formatTimeHelper(nextTs)}`;
+                                    
+                                    const bubble = document.createElement('div');
+                                    bubble.className = 'chat-message bot-message';
+                                    bubble.style.flex = '1';
+                                    
+                                    const textSpan = document.createElement('span');
+                                    textSpan.tabIndex = 0;
+                                    textSpan.textContent = `[${tsRange}] ${desc.description}`;
+                                    bubble.appendChild(textSpan);
+                                    
+                                    const speakerBtn = document.createElement('button');
+                                    speakerBtn.id = `ad-speaker-btn-loaded-${index}`;
+                                    setButtonToSpeakerIcon(speakerBtn);
+                                    speakerBtn.setAttribute('data-text', desc.description);
+                                    speakerBtn.style.background = 'none';
+                                    speakerBtn.style.border = 'none';
+                                    speakerBtn.style.fontSize = '18px';
+                                    speakerBtn.style.cursor = 'pointer';
+                                    speakerBtn.style.padding = '0';
+                                    speakerBtn.style.marginTop = '8px';
+                                    speakerBtn.style.opacity = '0.5';
+                                    speakerBtn.style.transition = 'opacity 0.2s';
+                                    
+                                    speakerBtn.addEventListener('mouseover', () => speakerBtn.style.opacity = '1');
+                                    speakerBtn.addEventListener('mouseout', () => speakerBtn.style.opacity = '0.5');
+                                    
+                                    speakerBtn.addEventListener('click', (event) => {
+                                        const thisButton = event.currentTarget;
+                                        
+                                        if (currentAudio && currentPlayingButton === thisButton) {
+                                            currentAudio.stop();
+                                            return;
+                                        }
+                                        
+                                        const textToSpeak = thisButton.getAttribute('data-text');
+                                        chrome.runtime.sendMessage({
+                                            type: 'CALL_OPENAI_TTS',
+                                            text: textToSpeak,
+                                            gender: gender
+                                        }, (ttsResponse) => {
+                                            if (ttsResponse && ttsResponse.success) {
+                                                playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
+                                            } else {
+                                                console.error('OpenAI TTS error:', ttsResponse?.error);
+                                            }
+                                        });
+                                    });
+                                    
+                                    messageContainer.appendChild(bubble);
+                                    messageContainer.appendChild(speakerBtn);
+                                    adMessages.appendChild(messageContainer);
+                                });
+                                console.log('[CustomQA] ✓ AD bubbles displayed');
+                            } else {
+                                console.warn('[CustomQA] ✗ AD container NOT found - bubbles cannot display');
                             }
-                            if (fields.speed?.integerValue) {
-                                const spd = fields.speed.integerValue;
-                                const slider = sidebar.querySelector('#vqa-speed-slider');
-                                if (slider) slider.value = spd;
-                            }
+                        } else {
+                            console.log('[CustomQA] ℹ No previous ADs found for this video');
                         }
-                    } catch (error) {
-                        console.warn('Failed to load user settings:', error);
+                    } catch (adError) {
+                        console.error('[CustomQA] ✗ Error loading ADs:', adError);
                     }
-                };
-                
-                // Save AD settings
+                    
+                    // Load previous VQA for this video
+                    try {
+                        const previousVQA = await window.DatabaseIntegration.loadGeneratedVQA(videoUrl);
+                        console.log('[CustomQA] VQA Load Result:', previousVQA ? 'SUCCESS' : 'NO DATA', previousVQA);
+                        
+                        if (previousVQA && previousVQA.messages && previousVQA.messages.length > 0) {
+                            console.log('[CustomQA] ✓ Displaying', previousVQA.messages.length, 'VQA message(s)');
+                            
+                            const vqaMessages = sidebar.querySelector('.vqa-sub-tab-content .chat-messages');
+                            console.log('[CustomQA] VQA container found:', !!vqaMessages);
+                            
+                            if (vqaMessages) {
+                                vqaMessages.innerHTML = '';
+                                
+                                // Separate questions from answers
+                                const questions = [];
+                                const answers = [];
+                                
+                                previousVQA.messages.forEach(msg => {
+                                    // Parse message if it's a stringified object
+                                    let msgContent = msg;
+                                    if (typeof msg === 'string') {
+                                        try {
+                                            msgContent = JSON.parse(msg);
+                                        } catch (e) {
+                                            console.warn('[CustomQA] Failed to parse message:', e);
+                                            msgContent = { role: 'assistant', content: msg };
+                                        }
+                                    }
+                                    
+                                    if (msgContent.role === 'user') {
+                                        questions.push(msgContent);
+                                    } else {
+                                        answers.push(msgContent);
+                                    }
+                                });
+                                
+                                // Display questions first (blue bubbles)
+                                questions.forEach(q => {
+                                    const message = document.createElement('div');
+                                    message.className = 'chat-message user-message';
+                                    message.textContent = q.content || q.text || '';
+                                    vqaMessages.appendChild(message);
+                                });
+                                
+                                // Display answers next (gray bubbles)
+                                answers.forEach(a => {
+                                    const message = document.createElement('div');
+                                    message.className = 'chat-message bot-message';
+                                    message.textContent = a.content || a.text || '';
+                                vqaMessages.appendChild(message);
+                            });
+                            
+                            console.log('[CustomQA] VQA display complete - Questions:', questions.length, 'Answers:', answers.length);
+                        } else {
+                            console.warn('[CustomQA] ✗ VQA container NOT found - bubbles cannot display');
+                        }
+                    } else {
+                        console.log('[CustomQA] ℹ No previous VQAs found for this video');
+                    }
+                    } catch (vqaError) {
+                        console.error('[CustomQA] ✗ Error loading VQAs:', vqaError);
+                    }
+                    
+                    console.log('[CustomQA] ========== VIDEO LOAD COMPLETE ==========');
+                    
+                    // Hide timewindow slider for non-admins
+                    const userRole = await window.DatabaseIntegration.getUserRole();
+                    if (userRole !== 'admin') {
+                        const timeWindowSlider = sidebar.querySelector('#time-window-slider');
+                        if (timeWindowSlider && timeWindowSlider.closest('.slider-container')) {
+                            timeWindowSlider.closest('.slider-container').style.display = 'none';
+                        }
+                    }
+                }
+
+                // Handle AD save
                 const adSaveBtn = sidebar.querySelector('#ad-save-button');
                 if (adSaveBtn) {
                     adSaveBtn.addEventListener('click', async () => {
-                        const { isLoggedIn, userId } = checkAuthStatus();
-                        if (!isLoggedIn) {
+                        const user = window.FirebaseAPI?.getCurrentUser();
+                        if (!user) {
                             alert('Please log in to save settings');
                             return;
                         }
@@ -406,48 +1276,27 @@
                         adSaveBtn.textContent = 'SAVING...';
 
                         try {
-                            const volume = sidebar.querySelector('#ad-volume-slider')?.value || 50;
-                            const speed = sidebar.querySelector('#ad-speed-slider')?.value || 50;
-                            const length = sidebar.querySelector('#length-slider')?.value || 25;
-                            const gender = sidebar.querySelector('[data-gender].active')?.dataset?.gender || 'female';
-                            const frequency = sidebar.querySelector('[data-frequency].active')?.dataset?.frequency || 'sometimes';
-                            const emphasis = sidebar.querySelector('[data-emphasis].active')?.dataset?.emphasis || 'balanced';
-                            const color = sidebar.querySelector('[data-color].active')?.dataset?.color || 'on';
-                            const narration = sidebar.querySelector('[data-narration].active')?.dataset?.narration || 'objective';
-
-                            const settingsBody = {
-                                fields: {
-                                    volume: { integerValue: volume },
-                                    speed: { integerValue: speed },
-                                    length: { integerValue: length },
-                                    gender: { stringValue: gender },
-                                    frequency: { stringValue: frequency },
-                                    emphasis: { stringValue: emphasis },
-                                    colorPreference: { stringValue: color },
-                                    narrationStyle: { stringValue: narration },
-                                    updatedAt: { timestampValue: new Date().toISOString() }
-                                }
+                            const customizations = {
+                                volume: sidebar.querySelector('#ad-volume-slider')?.value || 50,
+                                speed: sidebar.querySelector('#ad-speed-slider')?.value || 50,
+                                length: sidebar.querySelector('#length-slider')?.value || 25,
+                                frequency: sidebar.querySelector('[data-frequency].active')?.dataset?.frequency || 'sometimes',
+                                emphasis: sidebar.querySelector('[data-emphasis].active')?.dataset?.emphasis || 'balanced',
+                                colorPreference: sidebar.querySelector('[data-color].active')?.dataset?.color || 'on',
+                                narrationStyle: sidebar.querySelector('[data-narration].active')?.dataset?.narration || 'objective',
+                                gender: sidebar.querySelector('[data-gender].active')?.dataset?.gender || 'female'
                             };
 
-                            const response = await fetch(
-                                `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${userId}/settings/audioDescription?key=${FIREBASE_API_KEY}`,
-                                {
-                                    method: 'PATCH',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify(settingsBody)
-                                }
-                            );
-
-                            if (!response.ok) {
-                                throw new Error('Failed to save settings');
+                            const success = await window.DatabaseIntegration.saveADSettings(customizations);
+                            if (success) {
+                                adSaveBtn.textContent = 'SAVED ✓';
+                                setTimeout(() => {
+                                    adSaveBtn.textContent = 'SAVE CHANGES';
+                                    adSaveBtn.disabled = false;
+                                }, 2000);
+                            } else {
+                                throw new Error('Failed to save');
                             }
-
-                            adSaveBtn.textContent = 'SAVED ✓';
-                            setTimeout(() => {
-                                adSaveBtn.textContent = 'SAVE CHANGES';
-                                adSaveBtn.disabled = false;
-                            }, 2000);
-
                         } catch (error) {
                             alert('Failed to save settings: ' + error.message);
                             adSaveBtn.textContent = 'SAVE CHANGES';
@@ -455,83 +1304,45 @@
                         }
                     });
                 }
-                
-                // Check if user is already logged in on page load
-                const { isLoggedIn, userId } = checkAuthStatus();
-                if (isLoggedIn) {
-                    avatarBtn.textContent = '✓';
-                    avatarBtn.title = 'Logged in as ' + sessionStorage.getItem('customqa_email');
-                    loadUserSettings(userId);
-                }
 
-                // Close menu when clicking outside
-                document.addEventListener('click', (e) => {
-                    if (authMenuOpen && !sidebarHeader.contains(e.target)) {
-                        authMenuOpen = false;
-                        const authMenu = sidebar.querySelector('#auth-popup-menu');
-                        if (authMenu) {
-                            authMenu.style.display = 'none';
+                // Save VQA settings
+                const vqaSaveBtn = sidebar.querySelector('[aria-label="Save Changes"]');
+                if (vqaSaveBtn) {
+                    vqaSaveBtn.addEventListener('click', async () => {
+                        const user = window.FirebaseAPI?.getCurrentUser();
+                        if (!user) {
+                            alert('Please log in to save settings');
+                            return;
                         }
-                    }
-                });
 
-                // Save VQA settings - find all vqa save buttons
-                const vqaSaveButtons = sidebar.querySelectorAll('[aria-label="Save Changes"]');
-                vqaSaveButtons.forEach((btn, index) => {
-                    if (index === 1) { // The second Save Changes button is for VQA
-                        btn.addEventListener('click', async () => {
-                            const { isLoggedIn, userId } = checkAuthStatus();
-                            if (!isLoggedIn) {
-                                alert('Please log in to save settings');
-                                return;
-                            }
+                        vqaSaveBtn.disabled = true;
+                        vqaSaveBtn.textContent = 'SAVING...';
 
-                            btn.disabled = true;
-                            btn.textContent = 'SAVING...';
+                        try {
+                            const customizations = {
+                                volume: sidebar.querySelector('#vqa-volume-slider')?.value || 50,
+                                speed: sidebar.querySelector('#vqa-speed-slider')?.value || 50,
+                                length: sidebar.querySelector('#vqa-length-slider')?.value || 25,
+                                gender: sidebar.querySelector('#vqa-gender-group .active')?.dataset?.gender || 'female'
+                            };
 
-                            try {
-                                const volume = sidebar.querySelector('#vqa-volume-slider')?.value || 50;
-                                const speed = sidebar.querySelector('#vqa-speed-slider')?.value || 50;
-                                const length = sidebar.querySelector('#vqa-length-slider')?.value || 25;
-                                const gender = sidebar.querySelector('#vqa-gender-group .active')?.dataset?.gender || 'female';
-
-                                const settingsBody = {
-                                    fields: {
-                                        volume: { integerValue: volume },
-                                        speed: { integerValue: speed },
-                                        length: { integerValue: length },
-                                        gender: { stringValue: gender },
-                                        updatedAt: { timestampValue: new Date().toISOString() }
-                                    }
-                                };
-
-                                const response = await fetch(
-                                    `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${userId}/settings/vqa?key=${FIREBASE_API_KEY}`,
-                                    {
-                                        method: 'PATCH',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify(settingsBody)
-                                    }
-                                );
-
-                                if (!response.ok) {
-                                    throw new Error('Failed to save settings');
-                                }
-
-                                btn.textContent = 'SAVED ✓';
+                            const success = await window.DatabaseIntegration.saveVQASettings(customizations);
+                            if (success) {
+                                vqaSaveBtn.textContent = 'SAVED ✓';
                                 setTimeout(() => {
-                                    btn.textContent = 'SAVE CHANGES';
-                                    btn.disabled = false;
+                                    vqaSaveBtn.textContent = 'SAVE CHANGES';
+                                    vqaSaveBtn.disabled = false;
                                 }, 2000);
-
-                            } catch (error) {
-                                alert('Failed to save settings: ' + error.message);
-                                btn.textContent = 'SAVE CHANGES';
-                                btn.disabled = false;
+                            } else {
+                                throw new Error('Failed to save');
                             }
-                        });
-                    }
-                });
+                        } catch (error) {
+                            alert('Failed to save settings: ' + error.message);
+                            vqaSaveBtn.textContent = 'SAVE CHANGES';
+                            vqaSaveBtn.disabled = false;
+                        }
+                    });
+                }
 
                 // Load and set volume for both sliders
                 const adVolumeSlider = sidebar.querySelector('#ad-volume-slider');
@@ -1061,9 +1872,44 @@
                                     });
                                 });
 
-                                Promise.all(preloadPromises).then(() => {
+                                Promise.all(preloadPromises).then(async () => {
                                     console.log('All audio preloaded');
                                     displayAdBubbles(adSchedule);
+                                    
+                                    // Save generated ADs to Firestore if user is logged in
+                                    const user = window.FirebaseAPI?.getCurrentUser();
+                                    if (user && window.DatabaseIntegration) {
+                                        const videoUrl = window.location.href;
+                                        // Capture all current user settings as snapshot
+                                        const customizations = {
+                                            // AD settings
+                                            adVolume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 50),
+                                            adSpeed: parseInt(sidebar.querySelector('#ad-speed-slider')?.value || 50),
+                                            adGender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
+                                            adVoice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'natural',
+                                            adLength: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
+                                            adFrequency: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-frequency].active')?.dataset.frequency || 'sometimes',
+                                            adEmphasis: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
+                                            adColorPreference: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-color].active')?.dataset.color || 'on',
+                                            adNarrationStyle: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-narration].active')?.dataset.narration || 'objective',
+                                            adPauseDuringAd: sidebar.querySelector('#pause-ad-group .pill-button.active')?.dataset.value === 'true',
+                                            // VQA settings
+                                            vqaVolume: parseInt(sidebar.querySelector('#vqa-volume-slider')?.value || 50),
+                                            vqaSpeed: parseInt(sidebar.querySelector('#vqa-speed-slider')?.value || 50),
+                                            vqaGender: sidebar.querySelector('#vqa-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
+                                            vqaLength: parseInt(sidebar.querySelector('#time-window-slider')?.value || 25)
+                                        };
+                                        const generatedAds = adSchedule.map(ad => ({
+                                            timestamp_in_seconds: ad.timestamp,
+                                            description: ad.description
+                                        }));
+                                        
+                                        const saved = await window.DatabaseIntegration.saveGeneratedAD(videoUrl, video.duration, customizations, generatedAds);
+                                        if (saved) {
+                                            console.log('Generated ADs saved to Firestore');
+                                        }
+                                    }
+                                    
                                     video.currentTime = 0; // Restart video to apply ADs
                                     // Wait for seek to complete, then play
                                     const handleSeeked = () => {
@@ -1518,12 +2364,38 @@ Please analyze the video frames provided and answer their question about what's 
                                         type: 'CALL_GEMINI_VQA_MULTIFRAME',
                                         prompt: prompt,
                                         frames: frames
-                                    }, (response) => {
+                                    }, async (response) => {
                                         console.log('Received response from background:', response);
                                         if (response && response.success) {
                                             aiTextSpan.textContent = response.text;
                                             speakerBtn.setAttribute('data-text', response.text);
                                             speakerBtn.style.opacity = '1';
+                                            
+                                            // Save VQA to Firestore if user is logged in
+                                            const user = window.FirebaseAPI?.getCurrentUser();
+                                            if (user && window.DatabaseIntegration) {
+                                                const videoUrl = window.location.href;
+                                                // Capture all current settings as snapshot
+                                                const customizations = {
+                                                    // AD settings
+                                                    adVolume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 50),
+                                                    adSpeed: parseInt(sidebar.querySelector('#ad-speed-slider')?.value || 50),
+                                                    adGender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
+                                                    adVoice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'natural',
+                                                    adLength: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
+                                                    // VQA settings
+                                                    vqaVolume: parseInt(sidebar.querySelector('#vqa-volume-slider')?.value || 50),
+                                                    vqaSpeed: parseInt(sidebar.querySelector('#vqa-speed-slider')?.value || 50),
+                                                    vqaGender: sidebar.querySelector('#vqa-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
+                                                    vqaLength: parseInt(sidebar.querySelector('#time-window-slider')?.value || 25)
+                                                };
+                                                const messages = [
+                                                    { role: 'user', content: question, timestamp: Date.now() },
+                                                    { role: 'assistant', content: response.text, timestamp: Date.now() }
+                                                ];
+                                                
+                                                await window.DatabaseIntegration.saveGeneratedVQA(videoUrl, video.duration, customizations, messages);
+                                            }
                                             
                                             const genderBtnResp = sidebar.querySelector('.pill-button[data-gender].active');
                                             const genderResp = genderBtnResp ? genderBtnResp.dataset.gender : 'female';
