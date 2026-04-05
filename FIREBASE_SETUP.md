@@ -94,24 +94,19 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, write: if request.auth.uid == userId;
       
-      // Users can read/write their own settings
-      match /settings/{settingType} {
+      // Users can read/write their own videos subcollection
+      match /videos/{videoId} {
         allow read, write: if request.auth.uid == userId;
-      }
-    }
-    
-    // Videos collection - tied to user
-    match /videos/{videoId} {
-      // Only authenticated users can access
-      allow read, write: if request.auth != null;
-      
-      // Audio descriptions and VQA subcollections
-      match /audioDescriptions/{document=**} {
-        allow read, write: if request.auth != null;
-      }
-      
-      match /vqa/{document=**} {
-        allow read, write: if request.auth != null;
+        
+        // Users can read/write audio descriptions for their own videos
+        match /audioDescriptions/{document=**} {
+          allow read, write: if request.auth.uid == userId;
+        }
+        
+        // Users can read/write VQA for their own videos
+        match /vqa/{document=**} {
+          allow read, write: if request.auth.uid == userId;
+        }
       }
     }
   }
@@ -119,6 +114,8 @@ service cloud.firestore {
 ```
 
 3. Click **"Publish"**
+
+**IMPORTANT:** The `{userId}` in the match rule ensures users can ONLY read/write their own data. The nested match paths match your actual data structure: `/users/{userId}/videos/{videoId}/audioDescriptions/...` and `/users/{userId}/videos/{videoId}/vqa/...`
 
 ## Step 7: Enable CORS for Firebase
 
