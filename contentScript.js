@@ -2715,8 +2715,8 @@
                     });
                 }
 
-                const restoreSettingsButton = sidebar.querySelector('#restore-settings-button');
-                if (restoreSettingsButton) {
+                const restoreSettingsButtons = sidebar.querySelectorAll('#restore-settings-button');
+                if (restoreSettingsButtons.length > 0) {
                     // Define default settings to use when no previous settings found
                     const DEFAULT_SETTINGS = {
                         // AD Presentation Customization
@@ -2741,154 +2741,157 @@
                         vqaLength: 25
                     };
 
-                    restoreSettingsButton.addEventListener('click', async () => {
-                        try {
-                            const user = window.FirebaseAPI?.getCurrentUser();
-                            if (!user || !window.DatabaseIntegration) {
-                                console.log('[CustomQA] Restore Settings: Not logged in or database not available');
-                                return;
-                            }
+                    // Add the same event listener to all restore settings buttons
+                    restoreSettingsButtons.forEach(restoreSettingsButton => {
+                        restoreSettingsButton.addEventListener('click', async () => {
+                            try {
+                                const user = window.FirebaseAPI?.getCurrentUser();
+                                if (!user || !window.DatabaseIntegration) {
+                                    console.log('[CustomQA] Restore Settings: Not logged in or database not available');
+                                    return;
+                                }
 
-                            restoreSettingsButton.disabled = true;
-                            restoreSettingsButton.textContent = 'Searching...';
+                                restoreSettingsButton.disabled = true;
+                                restoreSettingsButton.textContent = 'Searching...';
 
-                            const result = await window.DatabaseIntegration.getMostRecentVideoSettings(window.location.href);
-                            
-                            // Use default settings if no previous settings found
-                            let settings = DEFAULT_SETTINGS;
-                            let videoTitle = 'Default Settings';
-                            
-                            if (result && result.settings) {
-                                settings = result.settings;
-                                videoTitle = result.videoTitle || 'Previous Video';
-                                console.log('[CustomQA] Restoring settings from:', videoTitle);
-                            } else {
-                                console.log('[CustomQA] No previous video settings found, applying default settings');
-                            }
+                                const result = await window.DatabaseIntegration.getMostRecentVideoSettings(window.location.href);
+                                
+                                // Use default settings if no previous settings found
+                                let settings = DEFAULT_SETTINGS;
+                                let videoTitle = 'Default Settings';
+                                
+                                if (result && result.settings) {
+                                    settings = result.settings;
+                                    videoTitle = result.videoTitle || 'Previous Video';
+                                    console.log('[CustomQA] Restoring settings from:', videoTitle);
+                                } else {
+                                    console.log('[CustomQA] No previous video settings found, applying default settings');
+                                }
 
-                            // Restore presentation customization
-                            const adSliders = {
-                                volume: sidebar.querySelector('#ad-volume-slider'),
-                                speed: sidebar.querySelector('#ad-speed-slider'),
-                                length: sidebar.querySelector('#length-slider')
-                            };
+                                // Restore presentation customization
+                                const adSliders = {
+                                    volume: sidebar.querySelector('#ad-volume-slider'),
+                                    speed: sidebar.querySelector('#ad-speed-slider'),
+                                    length: sidebar.querySelector('#length-slider')
+                                };
 
-                            if (settings.adVolume && adSliders.volume) adSliders.volume.value = settings.adVolume;
-                            if (settings.adSpeed && adSliders.speed) adSliders.speed.value = settings.adSpeed;
-                            if (settings.adLength && adSliders.length) adSliders.length.value = settings.adLength;
+                                if (settings.adVolume && adSliders.volume) adSliders.volume.value = settings.adVolume;
+                                if (settings.adSpeed && adSliders.speed) adSliders.speed.value = settings.adSpeed;
+                                if (settings.adLength && adSliders.length) adSliders.length.value = settings.adLength;
 
-                            const setButtonByDataAttr = (selector, attrName, attrValue) => {
-                                const buttons = sidebar.querySelectorAll(selector);
-                                buttons.forEach(btn => {
-                                    if (btn.dataset[attrName] === attrValue) {
-                                        btn.classList.add('active');
-                                        btn.setAttribute('aria-pressed', 'true');
-                                    } else {
-                                        btn.classList.remove('active');
-                                        btn.setAttribute('aria-pressed', 'false');
-                                    }
-                                });
-                            };
+                                const setButtonByDataAttr = (selector, attrName, attrValue) => {
+                                    const buttons = sidebar.querySelectorAll(selector);
+                                    buttons.forEach(btn => {
+                                        if (btn.dataset[attrName] === attrValue) {
+                                            btn.classList.add('active');
+                                            btn.setAttribute('aria-pressed', 'true');
+                                        } else {
+                                            btn.classList.remove('active');
+                                            btn.setAttribute('aria-pressed', 'false');
+                                        }
+                                    });
+                                };
 
-                            // Restore Gender and Voice
-                            if (settings.adGender) {
-                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-gender]', 'gender', settings.adGender);
-                            }
-                            if (settings.adVoice) {
-                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-voice]', 'voice', settings.adVoice);
-                            }
+                                // Restore Gender and Voice
+                                if (settings.adGender) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-gender]', 'gender', settings.adGender);
+                                }
+                                if (settings.adVoice) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-voice]', 'voice', settings.adVoice);
+                                }
 
-                            // Restore content customization
-                            if (settings.adFrequency) {
-                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-frequency]', 'frequency', settings.adFrequency);
-                            }
-                            if (settings.adEmphasis) {
-                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-emphasis]', 'emphasis', settings.adEmphasis);
-                            }
-                            if (settings.adColorPreference) {
-                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-color]', 'color', settings.adColorPreference);
-                            }
-                            if (settings.adNarration) {
-                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-narration]', 'narration', settings.adNarration);
-                            }
+                                // Restore content customization
+                                if (settings.adFrequency) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-frequency]', 'frequency', settings.adFrequency);
+                                }
+                                if (settings.adEmphasis) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-emphasis]', 'emphasis', settings.adEmphasis);
+                                }
+                                if (settings.adColorPreference) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-color]', 'color', settings.adColorPreference);
+                                }
+                                if (settings.adNarration) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-narration]', 'narration', settings.adNarration);
+                                }
 
-                            // Restore customization setups
-                            if (settings.adPauseDuringAd !== undefined) {
-                                const pauseAction = settings.adPauseDuringAd ? 'pause-on' : 'pause-off';
-                                setButtonByDataAttr('#pause-ad-group .pill-button', 'action', pauseAction);
-                            }
+                                // Restore customization setups
+                                if (settings.adPauseDuringAd !== undefined) {
+                                    const pauseAction = settings.adPauseDuringAd ? 'pause-on' : 'pause-off';
+                                    setButtonByDataAttr('#pause-ad-group .pill-button', 'action', pauseAction);
+                                }
 
-                            // Restore Audio Description ON/OFF status if available
-                            if (settings.adEnabled !== undefined) {
-                                const adToggleButtons = sidebar.querySelectorAll('#audio-descriptions-tab > .section:nth-child(3) .button-group .pill-button');
-                                if (adToggleButtons.length >= 2) {
-                                    const onBtn = adToggleButtons[0];
-                                    const offBtn = adToggleButtons[1];
-                                    if (settings.adEnabled) {
-                                        onBtn.classList.add('active');
-                                        onBtn.setAttribute('aria-pressed', 'true');
-                                        offBtn.classList.remove('active');
-                                        offBtn.setAttribute('aria-pressed', 'false');
-                                    } else {
-                                        offBtn.classList.add('active');
-                                        offBtn.setAttribute('aria-pressed', 'true');
-                                        onBtn.classList.remove('active');
-                                        onBtn.setAttribute('aria-pressed', 'false');
+                                // Restore Audio Description ON/OFF status if available
+                                if (settings.adEnabled !== undefined) {
+                                    const adToggleButtons = sidebar.querySelectorAll('#audio-descriptions-tab > .section:nth-child(3) .button-group .pill-button');
+                                    if (adToggleButtons.length >= 2) {
+                                        const onBtn = adToggleButtons[0];
+                                        const offBtn = adToggleButtons[1];
+                                        if (settings.adEnabled) {
+                                            onBtn.classList.add('active');
+                                            onBtn.setAttribute('aria-pressed', 'true');
+                                            offBtn.classList.remove('active');
+                                            offBtn.setAttribute('aria-pressed', 'false');
+                                        } else {
+                                            offBtn.classList.add('active');
+                                            offBtn.setAttribute('aria-pressed', 'true');
+                                            onBtn.classList.remove('active');
+                                            onBtn.setAttribute('aria-pressed', 'false');
+                                        }
                                     }
                                 }
-                            }
 
-                            // Restore VQA presentation customization
-                            const vqaSliders = {
-                                volume: sidebar.querySelector('#vqa-volume-slider'),
-                                speed: sidebar.querySelector('#vqa-speed-slider'),
-                                length: sidebar.querySelector('#vqa-length-slider')
-                            };
+                                // Restore VQA presentation customization
+                                const vqaSliders = {
+                                    volume: sidebar.querySelector('#vqa-volume-slider'),
+                                    speed: sidebar.querySelector('#vqa-speed-slider'),
+                                    length: sidebar.querySelector('#vqa-length-slider')
+                                };
 
-                            if (settings.vqaVolume !== undefined && vqaSliders.volume) vqaSliders.volume.value = settings.vqaVolume;
-                            if (settings.vqaSpeed !== undefined && vqaSliders.speed) vqaSliders.speed.value = settings.vqaSpeed;
-                            if (settings.vqaLength !== undefined && vqaSliders.length) {
-                                vqaSliders.length.value = settings.vqaLength;
-                                const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
-                                if (vqaLengthValue) vqaLengthValue.textContent = settings.vqaLength;
-                            }
+                                if (settings.vqaVolume !== undefined && vqaSliders.volume) vqaSliders.volume.value = settings.vqaVolume;
+                                if (settings.vqaSpeed !== undefined && vqaSliders.speed) vqaSliders.speed.value = settings.vqaSpeed;
+                                if (settings.vqaLength !== undefined && vqaSliders.length) {
+                                    vqaSliders.length.value = settings.vqaLength;
+                                    const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
+                                    if (vqaLengthValue) vqaLengthValue.textContent = settings.vqaLength;
+                                }
 
-                            // Restore VQA Gender and Voice if available
-                            if (settings.vqaGender) {
-                                setButtonByDataAttr('#vqa-tab .pill-button[data-gender]', 'gender', settings.vqaGender);
-                            }
-                            if (settings.vqaVoice) {
-                                setButtonByDataAttr('#vqa-tab .pill-button[data-voice]', 'voice', settings.vqaVoice);
-                            }
+                                // Restore VQA Gender and Voice if available
+                                if (settings.vqaGender) {
+                                    setButtonByDataAttr('#vqa-tab .pill-button[data-gender]', 'gender', settings.vqaGender);
+                                }
+                                if (settings.vqaVoice) {
+                                    setButtonByDataAttr('#vqa-tab .pill-button[data-voice]', 'voice', settings.vqaVoice);
+                                }
 
-                            console.log('[CustomQA] Settings restored successfully from:', videoTitle);
-                            
-                            // Save restored settings to user profile
-                            try {
-                                const allSettings = await getAllSettings(sidebar.querySelector('.tab-content:not([style*="display: none"])') || sidebar.querySelector('#audio-descriptions-tab'));
-                                await window.DatabaseIntegration.saveSettings(user.uid, allSettings);
-                                console.log('[CustomQA] Restored settings saved to user profile');
+                                console.log('[CustomQA] Settings restored successfully from:', videoTitle);
+                                
+                                // Save restored settings to user profile
+                                try {
+                                    const allSettings = await getAllSettings(sidebar.querySelector('.tab-content:not([style*="display: none"])') || sidebar.querySelector('#audio-descriptions-tab'));
+                                    await window.DatabaseIntegration.saveSettings(user.uid, allSettings);
+                                    console.log('[CustomQA] Restored settings saved to user profile');
+                                } catch (error) {
+                                    console.error('[CustomQA] Error saving restored settings:', error);
+                                }
+                                
+                                restoreSettingsButton.textContent = 'Settings Restored!';
+                                
+                                setTimeout(() => {
+                                    restoreSettingsButton.textContent = 'RESTORE SETTINGS';
+                                    restoreSettingsButton.disabled = false;
+                                }, 2000);
+
+                                clearAudioCache();
+                                setTimeout(() => {
+                                    preloadAllVisibleAudio();
+                                }, 50);
+
                             } catch (error) {
-                                console.error('[CustomQA] Error saving restored settings:', error);
-                            }
-                            
-                            restoreSettingsButton.textContent = 'Settings Restored!';
-                            
-                            setTimeout(() => {
+                                console.error('[CustomQA] Error restoring settings:', error);
                                 restoreSettingsButton.textContent = 'RESTORE SETTINGS';
                                 restoreSettingsButton.disabled = false;
-                            }, 2000);
-
-                            clearAudioCache();
-                            setTimeout(() => {
-                                preloadAllVisibleAudio();
-                            }, 50);
-
-                        } catch (error) {
-                            console.error('[CustomQA] Error restoring settings:', error);
-                            restoreSettingsButton.textContent = 'RESTORE SETTINGS';
-                            restoreSettingsButton.disabled = false;
-                        }
+                            }
+                        });
                     });
                 }
 
@@ -3531,7 +3534,7 @@ Please analyze the video frames provided and answer their question about what's 
 
                                 try {
                                     const initialWindow = 3;
-                                    const fallbackWindows = [9, 30, video.duration];
+                                    const fallbackWindows = [9, 30];
                                     
                                     aiTextSpan.textContent = `Capturing frames for ±${initialWindow}s...`;
                                     let response = await sendGeminiRequest(initialWindow);
@@ -3542,11 +3545,7 @@ Please analyze the video frames provided and answer their question about what's 
                                     } else {
                                         console.log('[VQA] Initial response invalid, attempting fallback strategy');
                                         for (const windowSize of fallbackWindows) {
-                                            if (windowSize === video.duration) {
-                                                aiTextSpan.textContent = 'Expanding to full video...';
-                                            } else {
-                                                aiTextSpan.textContent = `Expanding to ±${windowSize}s...`;
-                                            }
+                                            aiTextSpan.textContent = `Expanding to ±${windowSize}s...`;
                                             
                                             response = await sendGeminiRequest(windowSize);
                                             if (isValidResponse(response)) {

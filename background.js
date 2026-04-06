@@ -268,7 +268,7 @@ GENERAL AUDIO DESCRIPTION GUIDELINES:
     base_prompt += `
 CUSTOM GUIDELINES SPECIFIED BY USER:
 - Description Length: Target approximately ${customizations.length} words per description segment. This is a soft limit; you can go 5 words over or under if it improves the description.
-- Scene Change Timestamps: If you detect a significant scene change within a segment, mention the timestamp of the change in the description (e.g., "At 1:05, the scene changes to..."). Only include this if it fits naturally within the word count.
+- Scene Changes: Analyze the video frames to identify when the scene transitions (different location, camera angle, or significant visual context change). Include the exact timestamp of each scene change within your description (e.g., "At 1:05, the scene shifts to..." or "Scene changes at 0:35 to show..."). This helps BLV users track major transitions in the video.
 - Emphasis: ${emphasis_guidelines[customizations.emphasis] || emphasis_guidelines['balanced']}
 - Style: ${subjectiveness_guidelines[customizations.subjectiveness] || subjectiveness_guidelines['objective']}
 `;
@@ -282,13 +282,16 @@ CUSTOM GUIDELINES SPECIFIED BY USER:
 ${guidelines}
 
 TASK INSTRUCTIONS:
-You are provided with a series of video frames, each with a timestamp. Your task is to generate an audio description for each time segment between frames.
-When generating a description for a segment (e.g., from timestamp A to timestamp B), you must analyze *all* the frames provided to understand the full context of the scene. The description for that segment should summarize the key visual events that happen between timestamp A and B, not just what is visible at timestamp A.
-1. For each frame and its timestamp, create an audio description for the time period starting at that timestamp and ending at the next one.
-2. This description must summarize the actions and changes occurring during this interval, using all provided frames for context.
-3. Adhere to the user's customization settings.
-4. Ensure descriptions are presented in the order of the frames.
-5. Return descriptions as valid JSON matching the VideoMetadata schema.
+You are provided with a series of video frames, each with a timestamp. Your task is to generate comprehensive audio descriptions for each time segment spanning from one frame timestamp to the next.
+Your approach should be:
+1. Analyze all frames provided to understand the complete visual context and identify when all scene changes occur.
+2. For each timestamp in the sequence (e.g., 0:00, 0:30, 1:00, etc.), generate a description covering the entire time period from that timestamp up to the next frame timestamp.
+3. Within each description, explicitly identify and describe ALL scene changes that occur during that time segment, including the exact timestamp of each transition (e.g., "From 0:00 to 0:30: At 0:15, the scene transitions to..." or "0:00-0:30 covers: Initial scene until 0:20 when camera pans left to...").
+4. Ensure each description provides a comprehensive narrative of the full visual progression from start to end of that time segment, not just individual moments.
+5. For multi-scene time segments, list scene changes in chronological order with exact timestamps (e.g., "At 1:05, scene changes to..." "At 1:45, camera transitions to...").
+6. Adhere to the user's customization settings for emphasis, style, and word count.
+7. Ensure descriptions are presented in order of the timestamps.
+8. Return descriptions as valid JSON matching the VideoMetadata schema.
 
 IMPORTANT: Your response must be valid JSON matching the VideoMetadata schema with the structure:
 {
