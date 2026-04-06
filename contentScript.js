@@ -324,17 +324,17 @@
                                             customUserId: { stringValue: customUserId },
                                             role: { stringValue: role || 'guest' },
                                             // User-wide settings (persist across all videos)
-                                            adVolume: { integerValue: 50 },
+                                            adVolume: { integerValue: 100 },
                                             adSpeed: { integerValue: 50 },
                                             adGender: { stringValue: 'female' },
-                                            adVoice: { stringValue: 'natural' },
+                                            adVoice: { stringValue: 'human' },
                                             adLength: { integerValue: 25 },
                                             adFrequency: { stringValue: 'sometimes' },
                                             adEmphasis: { stringValue: 'balanced' },
                                             adColorPreference: { stringValue: 'on' },
                                             adNarrationStyle: { stringValue: 'objective' },
-                                            adPauseDuringAd: { booleanValue: true },
-                                            vqaVolume: { integerValue: 50 },
+                                            adPauseDuringAd: { booleanValue: false },
+                                            vqaVolume: { integerValue: 100 },
                                             vqaSpeed: { integerValue: 50 },
                                             vqaGender: { stringValue: 'female' },
                                             vqaLength: { integerValue: 25 },
@@ -425,18 +425,18 @@
                             if (data.fields) {
                                 return {
                                     // AD settings
-                                    adVolume: parseInt(data.fields.adVolume?.integerValue || 50),
+                                    adVolume: parseInt(data.fields.adVolume?.integerValue || 100),
                                     adSpeed: parseInt(data.fields.adSpeed?.integerValue || 50),
                                     adGender: data.fields.adGender?.stringValue || 'female',
-                                    adVoice: data.fields.adVoice?.stringValue || 'natural',
+                                    adVoice: data.fields.adVoice?.stringValue || 'human',
                                     adLength: parseInt(data.fields.adLength?.integerValue || 25),
                                     adFrequency: data.fields.adFrequency?.stringValue || 'sometimes',
                                     adEmphasis: data.fields.adEmphasis?.stringValue || 'balanced',
                                     adColorPreference: data.fields.adColorPreference?.stringValue || 'on',
                                     adNarrationStyle: data.fields.adNarrationStyle?.stringValue || 'objective',
-                                    adPauseDuringAd: data.fields.adPauseDuringAd?.booleanValue ?? true,
+                                    adPauseDuringAd: data.fields.adPauseDuringAd?.booleanValue ?? false,
                                     // VQA settings
-                                    vqaVolume: parseInt(data.fields.vqaVolume?.integerValue || 50),
+                                    vqaVolume: parseInt(data.fields.vqaVolume?.integerValue || 100),
                                     vqaSpeed: parseInt(data.fields.vqaSpeed?.integerValue || 50),
                                     vqaGender: data.fields.vqaGender?.stringValue || 'female',
                                     vqaLength: parseInt(data.fields.vqaLength?.integerValue || 25)
@@ -474,18 +474,18 @@
                                     body: JSON.stringify({
                                         fields: {
                                             // AD settings
-                                            adVolume: { integerValue: parseInt(settings.adVolume || 50) },
+                                            adVolume: { integerValue: parseInt(settings.adVolume || 100) },
                                             adSpeed: { integerValue: parseInt(settings.adSpeed || 50) },
                                             adGender: { stringValue: settings.adGender || 'female' },
-                                            adVoice: { stringValue: settings.adVoice || 'natural' },
+                                            adVoice: { stringValue: settings.adVoice || 'human' },
                                             adLength: { integerValue: parseInt(settings.adLength || 25) },
                                             adFrequency: { stringValue: settings.adFrequency || 'sometimes' },
                                             adEmphasis: { stringValue: settings.adEmphasis || 'balanced' },
                                             adColorPreference: { stringValue: settings.adColorPreference || 'on' },
                                             adNarrationStyle: { stringValue: settings.adNarrationStyle || 'objective' },
-                                            adPauseDuringAd: { booleanValue: settings.adPauseDuringAd ?? true },
+                                            adPauseDuringAd: { booleanValue: settings.adPauseDuringAd ?? false },
                                             // VQA settings
-                                            vqaVolume: { integerValue: parseInt(settings.vqaVolume || 50) },
+                                            vqaVolume: { integerValue: parseInt(settings.vqaVolume || 100) },
                                             vqaSpeed: { integerValue: parseInt(settings.vqaSpeed || 50) },
                                             vqaGender: { stringValue: settings.vqaGender || 'female' },
                                             vqaLength: { integerValue: parseInt(settings.vqaLength || 25) },
@@ -838,7 +838,18 @@
                     async restoreSettingsToUI(sidebar, settings) {
                         if (!sidebar || !settings) return;
                         
-                        // Restore AD settings
+                        // Helper to set active button by data attribute
+                        const setActiveButton = (selector, attrName, attrValue) => {
+                            if (!attrValue) return;
+                            const buttons = sidebar.querySelectorAll(selector);
+                            buttons.forEach(btn => {
+                                const isActive = btn.dataset[attrName] === attrValue;
+                                btn.classList.toggle('active', isActive);
+                                btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+                            });
+                        };
+
+                        // === AD PRESENTATION CUSTOMIZATION ===
                         if (settings.adVolume) {
                             const volSlider = sidebar.querySelector('#ad-volume-slider');
                             if (volSlider) volSlider.value = settings.adVolume;
@@ -847,19 +858,42 @@
                             const speedSlider = sidebar.querySelector('#ad-speed-slider');
                             if (speedSlider) speedSlider.value = settings.adSpeed;
                         }
-                        if (settings.adGender) {
-                            const genderBtn = sidebar.querySelector(`#audio-descriptions-tab .pill-button[data-gender="${settings.adGender}"]`);
-                            if (genderBtn) {
-                                sidebar.querySelectorAll('#audio-descriptions-tab .pill-button[data-gender]').forEach(b => b.classList.remove('active'));
-                                genderBtn.classList.add('active');
-                            }
+                        if (settings.adVoice) {
+                            setActiveButton('#audio-descriptions-tab .pill-button[data-voice]', 'voice', settings.adVoice);
                         }
+                        if (settings.adGender) {
+                            setActiveButton('#audio-descriptions-tab .pill-button[data-gender]', 'gender', settings.adGender);
+                        }
+
+                        // === AD CONTENT CUSTOMIZATION ===
                         if (settings.adLength) {
                             const lengthSlider = sidebar.querySelector('#length-slider');
-                            if (lengthSlider) lengthSlider.value = settings.adLength;
+                            if (lengthSlider) {
+                                lengthSlider.value = settings.adLength;
+                                const lengthValue = sidebar.querySelector('#length-value');
+                                if (lengthValue) lengthValue.textContent = settings.adLength;
+                            }
                         }
-                        
-                        // Restore VQA settings
+                        if (settings.adFrequency) {
+                            setActiveButton('#audio-descriptions-tab .pill-button[data-frequency]', 'frequency', settings.adFrequency);
+                        }
+                        if (settings.adEmphasis) {
+                            setActiveButton('#audio-descriptions-tab .pill-button[data-emphasis]', 'emphasis', settings.adEmphasis);
+                        }
+                        if (settings.adColorPreference) {
+                            setActiveButton('#audio-descriptions-tab .pill-button[data-color]', 'color', settings.adColorPreference);
+                        }
+                        if (settings.adNarrationStyle) {
+                            setActiveButton('#audio-descriptions-tab .pill-button[data-narration]', 'narration', settings.adNarrationStyle);
+                        }
+
+                        // === AD CUSTOMIZATION SETUPS ===
+                        if (settings.adPauseDuringAd !== undefined) {
+                            const pauseAction = settings.adPauseDuringAd ? 'pause-on' : 'pause-off';
+                            setActiveButton('#pause-ad-group .pill-button', 'action', pauseAction);
+                        }
+
+                        // === VQA PRESENTATION CUSTOMIZATION ===
                         if (settings.vqaVolume) {
                             const vqaVolSlider = sidebar.querySelector('#vqa-volume-slider');
                             if (vqaVolSlider) vqaVolSlider.value = settings.vqaVolume;
@@ -869,15 +903,17 @@
                             if (vqaSpeedSlider) vqaSpeedSlider.value = settings.vqaSpeed;
                         }
                         if (settings.vqaGender) {
-                            const vqaGenderBtn = sidebar.querySelector(`#vqa-tab .pill-button[data-gender="${settings.vqaGender}"]`);
-                            if (vqaGenderBtn) {
-                                sidebar.querySelectorAll('#vqa-tab .pill-button[data-gender]').forEach(b => b.classList.remove('active'));
-                                vqaGenderBtn.classList.add('active');
-                            }
+                            setActiveButton('#vqa-tab .pill-button[data-gender]', 'gender', settings.vqaGender);
                         }
+
+                        // === VQA CONTENT CUSTOMIZATION ===
                         if (settings.vqaLength) {
-                            const vqaLenSlider = sidebar.querySelector('[id*="time-window"]');
-                            if (vqaLenSlider) vqaLenSlider.value = settings.vqaLength;
+                            const vqaLenSlider = sidebar.querySelector('#vqa-length-slider');
+                            if (vqaLenSlider) {
+                                vqaLenSlider.value = settings.vqaLength;
+                                const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
+                                if (vqaLengthValue) vqaLengthValue.textContent = settings.vqaLength;
+                            }
                         }
                     },
 
@@ -1801,44 +1837,47 @@
                     const isADTab = tab.id === 'audio-descriptions-tab';
                     const settings = {};
                     
-                    // Presentation Customization
-                    const volumeSlider = tab.querySelector('[id*="volume-slider"]');
-                    const speedSlider = tab.querySelector('[id*="speed-slider"]');
-                    const genderBtn = tab.querySelector('.pill-button[data-gender].active');
-                    const voiceBtn = tab.querySelector('.pill-button[data-voice].active');
-                    
                     if (isADTab) {
-                        settings.volume = volumeSlider ? parseInt(volumeSlider.value) : 50;
-                        settings.speed = speedSlider ? parseInt(speedSlider.value) : 50;
-                        settings.gender = genderBtn ? genderBtn.dataset.gender : 'female';
-                        settings.voice = voiceBtn ? voiceBtn.dataset.voice : 'human';
+                        // === AD PRESENTATION CUSTOMIZATION ===
+                        const volumeSlider = tab.querySelector('#ad-volume-slider');
+                        const speedSlider = tab.querySelector('#ad-speed-slider');
+                        const genderBtn = tab.querySelector('.pill-button[data-gender].active');
+                        const voiceBtn = tab.querySelector('.pill-button[data-voice].active');
                         
-                        // Content Customization
+                        settings.adVolume = volumeSlider ? parseInt(volumeSlider.value) : 50;
+                        settings.adSpeed = speedSlider ? parseInt(speedSlider.value) : 50;
+                        settings.adGender = genderBtn ? genderBtn.dataset.gender : 'female';
+                        settings.adVoice = voiceBtn ? voiceBtn.dataset.voice : 'human';
+
+                        // === AD CONTENT CUSTOMIZATION ===
                         const lengthSlider = tab.querySelector('#length-slider');
                         const frequencyBtn = tab.querySelector('.pill-button[data-frequency].active');
                         const emphasisBtn = tab.querySelector('.pill-button[data-emphasis].active');
                         const colorBtn = tab.querySelector('.pill-button[data-color].active');
                         const narrationBtn = tab.querySelector('.pill-button[data-narration].active');
                         
-                        settings.length = lengthSlider ? parseInt(lengthSlider.value) : 25;
-                        settings.frequency = frequencyBtn ? frequencyBtn.dataset.frequency : 'sometimes';
-                        settings.emphasis = emphasisBtn ? emphasisBtn.dataset.emphasis : 'balanced';
-                        settings.colorPreference = colorBtn ? colorBtn.dataset.color : 'on';
-                        settings.narrationStyle = narrationBtn ? narrationBtn.dataset.narration : 'objective';
-                        
-                        // Customization Setups
+                        settings.adLength = lengthSlider ? parseInt(lengthSlider.value) : 25;
+                        settings.adFrequency = frequencyBtn ? frequencyBtn.dataset.frequency : 'sometimes';
+                        settings.adEmphasis = emphasisBtn ? emphasisBtn.dataset.emphasis : 'balanced';
+                        settings.adColorPreference = colorBtn ? colorBtn.dataset.color : 'on';
+                        settings.adNarrationStyle = narrationBtn ? narrationBtn.dataset.narration : 'objective';
+
+                        // === AD CUSTOMIZATION SETUPS ===
                         const pauseBtn = tab.querySelector('#pause-ad-group .pill-button.active');
-                        settings.pauseDuringAd = pauseBtn ? pauseBtn.dataset.action === 'pause-on' : true;
+                        settings.adPauseDuringAd = pauseBtn ? pauseBtn.dataset.action === 'pause-on' : true;
                     } else {
-                        // VQA Tab
-                        settings.volume = volumeSlider ? parseInt(volumeSlider.value) : 50;
-                        settings.speed = speedSlider ? parseInt(speedSlider.value) : 50;
-                        settings.gender = genderBtn ? genderBtn.dataset.gender : 'female';
-                        settings.voice = voiceBtn ? voiceBtn.dataset.voice : 'human';
+                        // === VQA PRESENTATION CUSTOMIZATION ===
+                        const volumeSlider = tab.querySelector('#vqa-volume-slider');
+                        const speedSlider = tab.querySelector('#vqa-speed-slider');
+                        const genderBtn = tab.querySelector('#vqa-tab .pill-button[data-gender].active');
                         
-                        // Content Customization (Length/Time Window)
-                        const lengthSlider = tab.querySelector('[id*="length-slider"]');
-                        settings.length = lengthSlider ? parseInt(lengthSlider.value) : 25;
+                        settings.vqaVolume = volumeSlider ? parseInt(volumeSlider.value) : 100;
+                        settings.vqaSpeed = speedSlider ? parseInt(speedSlider.value) : 50;
+                        settings.vqaGender = genderBtn ? genderBtn.dataset.gender : 'female';
+
+                        // === VQA CONTENT CUSTOMIZATION ===
+                        const lengthSlider = tab.querySelector('#vqa-length-slider');
+                        settings.vqaLength = lengthSlider ? parseInt(lengthSlider.value) : 25;
                     }
                     
                     return settings;
@@ -2400,10 +2439,10 @@
                         const user = window.FirebaseAPI?.getCurrentUser();
                         if (user && window.FirebaseAPI) {
                             const currentSettings = {
-                                adVolume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 50),
+                                adVolume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 100),
                                 adSpeed: parseInt(sidebar.querySelector('#ad-speed-slider')?.value || 50),
                                 adGender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
-                                adVoice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'natural',
+                                adVoice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'human',
                                 adLength: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
                                 adFrequency: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-frequency].active')?.dataset.frequency || 'sometimes',
                                 adEmphasis: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
@@ -2610,10 +2649,10 @@
                                         // Capture all current user settings as snapshot
                                         const customizations = {
                                             // AD settings
-                                            adVolume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 50),
+                                            adVolume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 100),
                                             adSpeed: parseInt(sidebar.querySelector('#ad-speed-slider')?.value || 50),
                                             adGender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
-                                            adVoice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'natural',
+                                            adVoice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'human',
                                             adLength: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
                                             adFrequency: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-frequency].active')?.dataset.frequency || 'sometimes',
                                             adEmphasis: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
@@ -2678,6 +2717,30 @@
 
                 const restoreSettingsButton = sidebar.querySelector('#restore-settings-button');
                 if (restoreSettingsButton) {
+                    // Define default settings to use when no previous settings found
+                    const DEFAULT_SETTINGS = {
+                        // AD Presentation Customization
+                        adVolume: 100,
+                        adSpeed: 50,
+                        adVoice: 'human',
+                        adGender: 'female',
+                        // AD Content Customization
+                        adLength: 25,
+                        adFrequency: 'sometimes',
+                        adEmphasis: 'balanced',
+                        adColorPreference: 'on',
+                        adNarrationStyle: 'objective',
+                        // AD Customization Setups
+                        adPauseDuringAd: false,
+                        // VQA Presentation Customization
+                        vqaVolume: 100,
+                        vqaSpeed: 50,
+                        vqaVoice: 'human',
+                        vqaGender: 'female',
+                        // VQA Content Customization
+                        vqaLength: 25
+                    };
+
                     restoreSettingsButton.addEventListener('click', async () => {
                         try {
                             const user = window.FirebaseAPI?.getCurrentUser();
@@ -2691,17 +2754,17 @@
 
                             const result = await window.DatabaseIntegration.getMostRecentVideoSettings(window.location.href);
                             
-                            if (!result || !result.settings) {
-                                console.log('[CustomQA] Restore Settings: No previous video settings found');
-                                restoreSettingsButton.textContent = 'RESTORE SETTINGS';
-                                restoreSettingsButton.disabled = false;
-                                return;
-                            }
-
-                            const settings = result.settings;
-                            const videoTitle = result.videoTitle || 'Previous Video';
+                            // Use default settings if no previous settings found
+                            let settings = DEFAULT_SETTINGS;
+                            let videoTitle = 'Default Settings';
                             
-                            console.log('[CustomQA] Restoring settings from:', videoTitle);
+                            if (result && result.settings) {
+                                settings = result.settings;
+                                videoTitle = result.videoTitle || 'Previous Video';
+                                console.log('[CustomQA] Restoring settings from:', videoTitle);
+                            } else {
+                                console.log('[CustomQA] No previous video settings found, applying default settings');
+                            }
 
                             // Restore presentation customization
                             const adSliders = {
@@ -2775,7 +2838,40 @@
                                 }
                             }
 
-                            console.log('[CustomQA] Settings restored successfully');
+                            // Restore VQA presentation customization
+                            const vqaSliders = {
+                                volume: sidebar.querySelector('#vqa-volume-slider'),
+                                speed: sidebar.querySelector('#vqa-speed-slider'),
+                                length: sidebar.querySelector('#vqa-length-slider')
+                            };
+
+                            if (settings.vqaVolume && vqaSliders.volume) vqaSliders.volume.value = settings.vqaVolume;
+                            if (settings.vqaSpeed && vqaSliders.speed) vqaSliders.speed.value = settings.vqaSpeed;
+                            if (settings.vqaLength && vqaSliders.length) {
+                                vqaSliders.length.value = settings.vqaLength;
+                                const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
+                                if (vqaLengthValue) vqaLengthValue.textContent = settings.vqaLength;
+                            }
+
+                            // Restore VQA Gender and Voice if available
+                            if (settings.vqaGender) {
+                                setButtonByDataAttr('#vqa-tab .pill-button[data-gender]', 'gender', settings.vqaGender);
+                            }
+                            if (settings.vqaVoice) {
+                                setButtonByDataAttr('#vqa-tab .pill-button[data-voice]', 'voice', settings.vqaVoice);
+                            }
+
+                            console.log('[CustomQA] Settings restored successfully from:', videoTitle);
+                            
+                            // Save restored settings to user profile
+                            try {
+                                const allSettings = await getAllSettings(sidebar.querySelector('.tab-content:not([style*="display: none"])') || sidebar.querySelector('#audio-descriptions-tab'));
+                                await window.DatabaseIntegration.saveSettings(user.uid, allSettings);
+                                console.log('[CustomQA] Restored settings saved to user profile');
+                            } catch (error) {
+                                console.error('[CustomQA] Error saving restored settings:', error);
+                            }
+                            
                             restoreSettingsButton.textContent = 'Settings Restored!';
                             
                             setTimeout(() => {
@@ -3413,7 +3509,18 @@ Please analyze the video frames provided and answer their question about what's 
                                         "not visible",
                                         "no frames",
                                         "cannot answer",
-                                        "can't answer"
+                                        "can't answer",
+                                        "unable to answer",
+                                        "i'm unable to",
+                                        "i cannot answer",
+                                        "don't have enough",
+                                        "insufficient information",
+                                        "too blurry",
+                                        "unclear",
+                                        "cannot identify",
+                                        "not clear enough",
+                                        "unable to identify",
+                                        "not possible to see"
                                     ];
                                     return !failureIndicators.some(indicator => text.includes(indicator));
                                 };
@@ -3455,9 +3562,22 @@ Please analyze the video frames provided and answer their question about what's 
                                         const user = window.FirebaseAPI?.getCurrentUser();
                                         if (user && window.DatabaseIntegration) {
                                             const videoUrl = window.location.href;
+                                            
+                                            // Gather ALL VQA presentation customizations
+                                            const vqaVolumeSlider = sidebar.querySelector('#vqa-volume-slider');
+                                            const vqaSpeedSlider = sidebar.querySelector('#vqa-speed-slider');
+                                            const vqaVoiceBtn = sidebar.querySelector('#vqa-tab .pill-button[data-voice].active');
+                                            const vqaGenderBtn = sidebar.querySelector('#vqa-tab .pill-button[data-gender].active');
+                                            const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
+                                            
                                             const customizations = {
-                                                vqaLength: parseInt(sidebar.querySelector('#vqa-length-slider')?.value || 25)
+                                                vqaVolume: vqaVolumeSlider ? parseInt(vqaVolumeSlider.value) : 100,
+                                                vqaSpeed: vqaSpeedSlider ? parseInt(vqaSpeedSlider.value) : 50,
+                                                vqaVoice: vqaVoiceBtn ? vqaVoiceBtn.dataset.voice : 'human',
+                                                vqaGender: vqaGenderBtn ? vqaGenderBtn.dataset.gender : 'female',
+                                                vqaLength: vqaLengthSlider ? parseInt(vqaLengthSlider.value) : 25
                                             };
+                                            
                                             const messages = [
                                                 { role: 'user', content: question, timestamp: Date.now() },
                                                 { role: 'assistant', content: response.text, timestamp: Date.now() }
