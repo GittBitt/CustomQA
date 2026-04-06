@@ -89,6 +89,38 @@ window.DatabaseIntegration = {
     return await window.FirebaseAPI.loadVideoVQA(videoUrl);
   },
 
+  // Check if existing AD exists for a video
+  async hasExistingAD(videoUrl) {
+    const user = window.FirebaseAPI?.getCurrentUser();
+    if (!user) return false;
+    
+    return await window.FirebaseAPI.hasExistingAD(videoUrl);
+  },
+
+  // Check if existing VQA exists for a video
+  async hasExistingVQA(videoUrl) {
+    const user = window.FirebaseAPI?.getCurrentUser();
+    if (!user) return false;
+    
+    return await window.FirebaseAPI.hasExistingVQA(videoUrl);
+  },
+
+  // Get the most recent AD for a video
+  async getMostRecentAD(videoUrl) {
+    const user = window.FirebaseAPI?.getCurrentUser();
+    if (!user) return null;
+    
+    return await window.FirebaseAPI.getMostRecentAD(videoUrl);
+  },
+
+  // Get the most recent VQA for a video
+  async getMostRecentVQA(videoUrl) {
+    const user = window.FirebaseAPI?.getCurrentUser();
+    if (!user) return null;
+    
+    return await window.FirebaseAPI.getMostRecentVQA(videoUrl);
+  },
+
   async getUserRole() {
     const user = window.FirebaseAPI?.getCurrentUser();
     if (!user) return 'guest';

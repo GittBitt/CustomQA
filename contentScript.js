@@ -473,63 +473,59 @@
                     async loadGeneratedAD(userId, videoId) {
                         if (!idToken_FBAuth) return null;
                         try {
-                            // Load all AD documents from the audioDescriptions subcollection
-                            const listResponse = await fetch(
-                                `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/audioDescriptions?key=${window.firebaseConfig.apiKey}`,
+                            // Load the "current" AD document directly
+                            const response = await fetch(
+                                `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/audioDescriptions/current?key=${window.firebaseConfig.apiKey}`,
                                 {
                                     method: 'GET',
                                     headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
                                 }
                             );
                             
-                            if (listResponse.status === 404) return null;
-                            if (!listResponse.ok) {
-                                console.error('Load AD list error:', listResponse.status);
+                            if (response.status === 404) {
+                                console.log('[CustomQA] No saved AD document found (404)');
+                                return null;
+                            }
+                            if (!response.ok) {
+                                console.error('Load AD error:', response.status, response.statusText);
                                 return null;
                             }
                             
-                            const listData = await listResponse.json();
-                            const documents = listData.documents || [];
+                            const data = await response.json();
+                            const fields = data.fields || {};
                             
-                            // Return the most recent AD document
-                            if (documents.length > 0) {
-                                const latestDoc = documents[documents.length - 1];
-                                const fields = latestDoc.fields || {};
-                                
-                                // Parse customizations
-                                let customizations = {};
-                                if (fields.customizations?.stringValue) {
-                                    try {
-                                        customizations = JSON.parse(fields.customizations.stringValue);
-                                    } catch (e) {
-                                        console.warn('Failed to parse customizations:', e);
-                                    }
+                            // Parse customizations
+                            let customizations = {};
+                            if (fields.customizations?.stringValue) {
+                                try {
+                                    customizations = JSON.parse(fields.customizations.stringValue);
+                                } catch (e) {
+                                    console.warn('Failed to parse customizations:', e);
                                 }
-                                
-                                // Parse generated ADs - they're stored as array of stringValues
-                                let generatedAds = [];
-                                if (fields.generatedAds?.arrayValue?.values) {
-                                    generatedAds = fields.generatedAds.arrayValue.values.map(val => {
-                                        if (val.stringValue) {
-                                            try {
-                                                return JSON.parse(val.stringValue);
-                                            } catch (e) {
-                                                console.warn('Failed to parse AD:', e);
-                                                return { timestamp_in_seconds: 0, description: val.stringValue };
-                                            }
-                                        }
-                                        return val;
-                                    });
-                                }
-                                
-                                return {
-                                    customizations: customizations,
-                                    generatedAds: generatedAds,
-                                    timestamp: fields.timestamp?.integerValue || Date.now(),
-                                    createdAt: fields.createdAt?.timestampValue || new Date().toISOString()
-                                };
                             }
-                            return null;
+                            
+                            // Parse generated ADs - they're stored as array of stringValues
+                            let generatedAds = [];
+                            if (fields.generatedAds?.arrayValue?.values) {
+                                generatedAds = fields.generatedAds.arrayValue.values.map(val => {
+                                    if (val.stringValue) {
+                                        try {
+                                            return JSON.parse(val.stringValue);
+                                        } catch (e) {
+                                            console.warn('Failed to parse AD:', e);
+                                            return { timestamp_in_seconds: 0, description: val.stringValue };
+                                        }
+                                    }
+                                    return val;
+                                });
+                            }
+                            
+                            return {
+                                customizations: customizations,
+                                generatedAds: generatedAds,
+                                timestamp: fields.timestamp?.integerValue || Date.now(),
+                                createdAt: fields.createdAt?.timestampValue || new Date().toISOString()
+                            };
                         } catch (error) {
                             console.error('Error loading AD:', error);
                             return null;
@@ -553,6 +549,14 @@
                             const adDocId = this.generateDocumentId();
                             const timestamp = new Date().toISOString();
                             
+                            const adDocFields = {
+                                customizations: { stringValue: JSON.stringify(customizations) },
+                                generatedAds: { arrayValue: { values: generatedAds.map(ad => ({ stringValue: JSON.stringify(ad) })) } },
+                                timestamp: { integerValue: Date.now() },
+                                createdAt: { timestampValue: timestamp }
+                            };
+                            
+                            // Save to unique document for history
                             console.log('Saving AD to subcollection:', adDocId);
                             const adDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/audioDescriptions/${adDocId}`;
                             
@@ -564,14 +568,7 @@
                                         'Authorization': `Bearer ${idToken_FBAuth}`,
                                         'Content-Type': 'application/json'
                                     },
-                                    body: JSON.stringify({
-                                        fields: {
-                                            customizations: { stringValue: JSON.stringify(customizations) },
-                                            generatedAds: { arrayValue: { values: generatedAds.map(ad => ({ stringValue: JSON.stringify(ad) })) } },
-                                            timestamp: { integerValue: Date.now() },
-                                            createdAt: { timestampValue: timestamp }
-                                        }
-                                    })
+                                    body: JSON.stringify({ fields: adDocFields })
                                 }
                             );
                             const data = await response.json();
@@ -579,6 +576,24 @@
                                 console.error('Save AD error:', data.error?.message || JSON.stringify(data));
                                 return false;
                             }
+                            
+                            // Also save to "current" document for easy retrieval
+                            const currentDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/audioDescriptions/current`;
+                            const currentResponse = await fetch(
+                                `https://firestore.googleapis.com/v1/${currentDocPath}?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Authorization': `Bearer ${idToken_FBAuth}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({ fields: adDocFields })
+                                }
+                            );
+                            if (!currentResponse.ok) {
+                                console.warn('Save AD to current document warning:', currentResponse.status);
+                            }
+                            
                             console.log('AD saved successfully:', adDocId);
                             return true;
                         } catch (error) {
@@ -590,63 +605,59 @@
                     async loadGeneratedVQA(userId, videoId) {
                         if (!idToken_FBAuth) return null;
                         try {
-                            // Load all VQA documents from the vqa subcollection
-                            const listResponse = await fetch(
-                                `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa?key=${window.firebaseConfig.apiKey}`,
+                            // Load the "current" VQA document directly
+                            const response = await fetch(
+                                `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/current?key=${window.firebaseConfig.apiKey}`,
                                 {
                                     method: 'GET',
                                     headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
                                 }
                             );
                             
-                            if (listResponse.status === 404) return null;
-                            if (!listResponse.ok) {
-                                console.error('Load VQA list error:', listResponse.status);
+                            if (response.status === 404) {
+                                console.log('[CustomQA] No saved VQA document found (404)');
+                                return null;
+                            }
+                            if (!response.ok) {
+                                console.error('Load VQA error:', response.status, response.statusText);
                                 return null;
                             }
                             
-                            const listData = await listResponse.json();
-                            const documents = listData.documents || [];
+                            const data = await response.json();
+                            const fields = data.fields || {};
                             
-                            // Return the most recent VQA document
-                            if (documents.length > 0) {
-                                const latestDoc = documents[documents.length - 1];
-                                const fields = latestDoc.fields || {};
-                                
-                                // Parse customizations
-                                let customizations = {};
-                                if (fields.customizations?.stringValue) {
-                                    try {
-                                        customizations = JSON.parse(fields.customizations.stringValue);
-                                    } catch (e) {
-                                        console.warn('Failed to parse VQA customizations:', e);
-                                    }
+                            // Parse customizations
+                            let customizations = {};
+                            if (fields.customizations?.stringValue) {
+                                try {
+                                    customizations = JSON.parse(fields.customizations.stringValue);
+                                } catch (e) {
+                                    console.warn('Failed to parse customizations:', e);
                                 }
-                                
-                                // Parse messages - they're stored as array of stringValues
-                                let messages = [];
-                                if (fields.messages?.arrayValue?.values) {
-                                    messages = fields.messages.arrayValue.values.map(val => {
-                                        if (val.stringValue) {
-                                            try {
-                                                return JSON.parse(val.stringValue);
-                                            } catch (e) {
-                                                console.warn('Failed to parse message:', e);
-                                                return { role: 'assistant', content: val.stringValue };
-                                            }
-                                        }
-                                        return val;
-                                    });
-                                }
-                                
-                                return {
-                                    customizations: customizations,
-                                    messages: messages,
-                                    timestamp: fields.timestamp?.integerValue || Date.now(),
-                                    createdAt: fields.createdAt?.timestampValue || new Date().toISOString()
-                                };
                             }
-                            return null;
+                            
+                            // Parse messages - they're stored as array of stringValues
+                            let messages = [];
+                            if (fields.messages?.arrayValue?.values) {
+                                messages = fields.messages.arrayValue.values.map(val => {
+                                    if (val.stringValue) {
+                                        try {
+                                            return JSON.parse(val.stringValue);
+                                        } catch (e) {
+                                            console.warn('Failed to parse message:', e);
+                                            return { role: 'assistant', content: val.stringValue };
+                                        }
+                                    }
+                                    return val;
+                                });
+                            }
+                            
+                            return {
+                                customizations: customizations,
+                                messages: messages,
+                                timestamp: fields.timestamp?.integerValue || Date.now(),
+                                createdAt: fields.createdAt?.timestampValue || new Date().toISOString()
+                            };
                         } catch (error) {
                             console.error('Error loading VQA:', error);
                             return null;
@@ -670,6 +681,14 @@
                             const vqaDocId = this.generateDocumentId();
                             const timestamp = new Date().toISOString();
                             
+                            const vqaDocFields = {
+                                customizations: { stringValue: JSON.stringify(customizations) },
+                                messages: { arrayValue: { values: messages.map(m => ({ stringValue: JSON.stringify(m) })) } },
+                                timestamp: { integerValue: Date.now() },
+                                createdAt: { timestampValue: timestamp }
+                            };
+                            
+                            // Save to unique document for history
                             console.log('Saving VQA to subcollection:', vqaDocId);
                             const vqaDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/${vqaDocId}`;
                             
@@ -681,14 +700,7 @@
                                         'Authorization': `Bearer ${idToken_FBAuth}`,
                                         'Content-Type': 'application/json'
                                     },
-                                    body: JSON.stringify({
-                                        fields: {
-                                            customizations: { stringValue: JSON.stringify(customizations) },
-                                            messages: { arrayValue: { values: messages.map(m => ({ stringValue: JSON.stringify(m) })) } },
-                                            timestamp: { integerValue: Date.now() },
-                                            createdAt: { timestampValue: timestamp }
-                                        }
-                                    })
+                                    body: JSON.stringify({ fields: vqaDocFields })
                                 }
                             );
                             const data = await response.json();
@@ -696,6 +708,24 @@
                                 console.error('Save VQA error:', data.error?.message || JSON.stringify(data));
                                 return false;
                             }
+                            
+                            // Also save to "current" document for easy retrieval
+                            const currentDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/current`;
+                            const currentResponse = await fetch(
+                                `https://firestore.googleapis.com/v1/${currentDocPath}?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'PATCH',
+                                    headers: {
+                                        'Authorization': `Bearer ${idToken_FBAuth}`,
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({ fields: vqaDocFields })
+                                }
+                            );
+                            if (!currentResponse.ok) {
+                                console.warn('Save VQA to current document warning:', currentResponse.status);
+                            }
+                            
                             console.log('VQA saved successfully:', vqaDocId);
                             return true;
                         } catch (error) {
@@ -1071,12 +1101,44 @@
 
                 // Load user settings if logged in
                 const user = window.FirebaseAPI?.getCurrentUser();
+                let hasExistingAD = false;
+                let hasExistingVQA = false;
+                
                 if (user && window.DatabaseIntegration) {
                     const settings = await window.DatabaseIntegration.loadUserSettings();
                     if (settings) {
                         window.DatabaseIntegration.restoreSettingsToUI(sidebar, settings);
                     }
                     
+                    // Helper function to format dates
+                    const formatDateHelper = (isoString) => {
+                        if (!isoString) return '';
+                        try {
+                            const date = new Date(isoString);
+                            const now = new Date();
+                            const diffMs = now - date;
+                            const diffMins = Math.floor(diffMs / 60000);
+                            const diffHours = Math.floor(diffMs / 3600000);
+                            const diffDays = Math.floor(diffMs / 86400000);
+                            
+                            if (diffMins < 1) return 'just now';
+                            if (diffMins < 60) return `${diffMins}m ago`;
+                            if (diffHours < 24) return `${diffHours}h ago`;
+                            if (diffDays < 7) return `${diffDays}d ago`;
+                            
+                            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                        } catch {
+                            return '';
+                        }
+                    };
+                    
+                    // Helper function to format time
+                    const formatTimeHelper = (seconds) => {
+                        const mins = Math.floor(seconds / 60);
+                        const secs = Math.floor(seconds % 60);
+                        return `${mins}:${secs.toString().padStart(2, '0')}`;
+                    };
+
                     // Load previous ADs for this video
                     const videoUrl = window.location.href;
                     const videoIdFromUrl = videoUrl.split('v=')[1]?.split('&')[0];
@@ -1090,6 +1152,7 @@
                         console.log('[CustomQA] AD Load Result:', previousAD ? 'SUCCESS' : 'NO DATA', previousAD);
                         
                         if (previousAD && previousAD.generatedAds && previousAD.generatedAds.length > 0) {
+                            hasExistingAD = true;
                             console.log('[CustomQA] ✓ Displaying', previousAD.generatedAds.length, 'AD(s)');
                             
                             // Restore settings that were used when this AD was generated
@@ -1097,19 +1160,25 @@
                                 window.DatabaseIntegration.restoreSettingsToUI(sidebar, previousAD.customizations);
                             }
                             
-                            // Helper function to format time
-                            const formatTimeHelper = (seconds) => {
-                                const mins = Math.floor(seconds / 60);
-                                const secs = Math.floor(seconds % 60);
-                                return `${mins}:${secs.toString().padStart(2, '0')}`;
-                            };
-                            
                             // Display the ADs with full UI (speaker buttons, etc)
                             const adMessages = sidebar.querySelector('#ad-messages');
                             console.log('[CustomQA] AD container found:', !!adMessages);
                             
                             if (adMessages) {
                                 adMessages.innerHTML = '';
+                                
+                                // Add metadata badge showing when this was created
+                                const metadataBadge = document.createElement('div');
+                                metadataBadge.style.background = '#e8f5e9';
+                                metadataBadge.style.border = '1px solid #4caf50';
+                                metadataBadge.style.borderRadius = '4px';
+                                metadataBadge.style.padding = '8px 12px';
+                                metadataBadge.style.marginBottom = '12px';
+                                metadataBadge.style.fontSize = '12px';
+                                metadataBadge.style.color = '#2e7d32';
+                                metadataBadge.innerHTML = `<strong>Saved Descriptions</strong> • ${formatDateHelper(previousAD.createdAt)}`;
+                                adMessages.appendChild(metadataBadge);
+                                
                                 const descriptions = previousAD.generatedAds;
                                 const gender = previousAD.customizations?.adGender || 'female';
                                 
@@ -1192,6 +1261,7 @@
                         console.log('[CustomQA] VQA Load Result:', previousVQA ? 'SUCCESS' : 'NO DATA', previousVQA);
                         
                         if (previousVQA && previousVQA.messages && previousVQA.messages.length > 0) {
+                            hasExistingVQA = true;
                             console.log('[CustomQA] ✓ Displaying', previousVQA.messages.length, 'VQA message(s)');
                             
                             const vqaMessages = sidebar.querySelector('.vqa-sub-tab-content .chat-messages');
@@ -1199,6 +1269,18 @@
                             
                             if (vqaMessages) {
                                 vqaMessages.innerHTML = '';
+                                
+                                // Add metadata badge showing when this was created
+                                const metadataBadge = document.createElement('div');
+                                metadataBadge.style.background = '#e3f2fd';
+                                metadataBadge.style.border = '1px solid #2196f3';
+                                metadataBadge.style.borderRadius = '4px';
+                                metadataBadge.style.padding = '8px 12px';
+                                metadataBadge.style.marginBottom = '12px';
+                                metadataBadge.style.fontSize = '12px';
+                                metadataBadge.style.color = '#1565c0';
+                                metadataBadge.innerHTML = `<strong>Saved Q&A</strong> • ${formatDateHelper(previousVQA.createdAt)}`;
+                                vqaMessages.appendChild(metadataBadge);
                                 
                                 // Separate questions from answers
                                 const questions = [];
@@ -1236,16 +1318,16 @@
                                     const message = document.createElement('div');
                                     message.className = 'chat-message bot-message';
                                     message.textContent = a.content || a.text || '';
-                                vqaMessages.appendChild(message);
-                            });
-                            
-                            console.log('[CustomQA] VQA display complete - Questions:', questions.length, 'Answers:', answers.length);
+                                    vqaMessages.appendChild(message);
+                                });
+                                
+                                console.log('[CustomQA] VQA display complete - Questions:', questions.length, 'Answers:', answers.length);
+                            } else {
+                                console.warn('[CustomQA] ✗ VQA container NOT found - bubbles cannot display');
+                            }
                         } else {
-                            console.warn('[CustomQA] ✗ VQA container NOT found - bubbles cannot display');
+                            console.log('[CustomQA] ℹ No previous VQAs found for this video');
                         }
-                    } else {
-                        console.log('[CustomQA] ℹ No previous VQAs found for this video');
-                    }
                     } catch (vqaError) {
                         console.error('[CustomQA] ✗ Error loading VQAs:', vqaError);
                     }
@@ -1707,6 +1789,11 @@
                 let cancelAdGeneration = false;
                 const generateAdButton = sidebar.querySelector('#generate-ad-button');
                 if (generateAdButton) {
+                    // Update button text based on whether ADs exist
+                    if (hasExistingAD) {
+                        generateAdButton.textContent = 'REGENERATE AD';
+                    }
+                    
                     generateAdButton.addEventListener('click', async () => {
                         // Clear previous ADs immediately
                         adSchedule = [];
@@ -1934,7 +2021,7 @@
                         } finally {
                             isAdGenerationRunning = false;
                             cancelAdGeneration = false;
-                            generateAdButton.textContent = 'GENERATE AD';
+                            generateAdButton.textContent = 'REGENERATE AD';
                             generateAdButton.disabled = false;
                         }
                     });
@@ -1944,6 +2031,18 @@
                     console.log('Displaying AD bubbles:', descriptions);
                     const adMessages = sidebar.querySelector('#ad-messages');
                     adMessages.innerHTML = '';
+                    
+                    // Add metadata badge for newly generated ADs
+                    const metadataBadge = document.createElement('div');
+                    metadataBadge.style.background = '#fff3e0';
+                    metadataBadge.style.border = '1px solid #ff9800';
+                    metadataBadge.style.borderRadius = '4px';
+                    metadataBadge.style.padding = '8px 12px';
+                    metadataBadge.style.marginBottom = '12px';
+                    metadataBadge.style.fontSize = '12px';
+                    metadataBadge.style.color = '#e65100';
+                    metadataBadge.innerHTML = '<strong>Just Generated</strong> • Now';
+                    adMessages.appendChild(metadataBadge);
                     
                     const genderButton = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
                     const gender = genderButton ? genderButton.dataset.gender : 'female';
@@ -2160,7 +2259,6 @@
                     vqaSendButton.addEventListener('click', () => {
                         const chatInput = sidebar.querySelector('#vqa-tab .chat-input');
                         const chatMessages = sidebar.querySelector('#vqa-tab .chat-messages');
-                        chatMessages.innerHTML = ''; // Clear previous messages
                         const question = chatInput.value.trim();
 
                         if (question) {
