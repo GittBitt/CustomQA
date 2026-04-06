@@ -43,8 +43,19 @@
         const video = document.querySelector('video.html5-main-video');
         let currentAudio = null;
         let currentPlayingButton = null;
+        let currentVideoUrl = null; // Track which video ADs belong to
+        let lastAdPlayTime = 0; // Track when the last AD was triggered to prevent rapid re-triggers
+        let isPlayingAd = false; // Semaphore to prevent simultaneous AD playback
+        const MIN_AD_INTERVAL = 500; // Minimum 500ms between AD triggers (prevents scrubbing issues)
+        
+        // Helper function to detect if YouTube is showing an advertisement
+        const isYouTubeAdPlaying = () => {
+            // Only check for Skip Ad button which definitively indicates an ad is playing
+            const skipAdButton = document.querySelector('.ytp-ad-skip-button');
+            return skipAdButton && !skipAdButton.style.display?.includes('none') && skipAdButton.offsetParent !== null;
+        };
 
-        const playAudioFromDataUrl = async (dataUrl, buttonElement, onendedCallback = null) => {
+        const playAudioFromDataUrl = async (dataUrl, buttonElement, onendedCallback = null, delayMs = 0) => {
             if (currentAudio) {
                 try {
                     currentAudio.onended = null; // Prevent old onended from firing
@@ -64,41 +75,61 @@
                 const arrayBuffer = await response.arrayBuffer();
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-                const source = audioContext.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(gainNode);
+                const playSound = () => {
+                    const source = audioContext.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(gainNode);
 
-                gainNode.gain.value = currentVolume;
+                    gainNode.gain.value = currentVolume;
 
-                const speedSlider = document.getElementById('ad-speed-slider') || document.getElementById('vqa-speed-slider');
-                if (speedSlider) {
-                    source.playbackRate.value = parseFloat(speedSlider.value) / 50;
-                }
+                    const speedSlider = document.getElementById('ad-speed-slider') || document.getElementById('vqa-speed-slider');
+                    if (speedSlider) {
+                        source.playbackRate.value = parseFloat(speedSlider.value) / 50;
+                    }
 
-                source.onended = () => {
-                    console.log('Audio playback ended.');
-                    currentAudio = null;
-                    currentPlayingButton = null;
+                    source.onended = () => {
+                        console.log('Audio playback ended.');
+                        currentAudio = null;
+                        currentPlayingButton = null;
+                        isPlayingAd = false; // Reset AD playback semaphore
+                        if (buttonElement) {
+                            setButtonToSpeakerIcon(buttonElement);
+                        }
+                        // If this was the first AD and video was paused, resume it
+                        if (window.shouldResumeAfterFirstAD && buttonElement?.id === 'ad-speaker-btn-loaded-0') {
+                            console.log('[CustomQA] ▶ Resuming video after first AD finished');
+                            window.shouldResumeAfterFirstAD = false;
+                            if (video) {
+                                video.play();
+                            }
+                        }
+                        if (onendedCallback) {
+                            onendedCallback();
+                        }
+                    };
+
+                    source.start(0);
+
                     if (buttonElement) {
-                        setButtonToSpeakerIcon(buttonElement);
+                        setButtonToStopIcon(buttonElement);
                     }
-                    if (onendedCallback) {
-                        onendedCallback();
-                    }
+
+                    currentAudio = source;
+                    currentPlayingButton = buttonElement;
+                    return source;
                 };
 
-                source.start(0);
-
-                if (buttonElement) {
-                    setButtonToStopIcon(buttonElement);
+                if (delayMs > 0) {
+                    console.log('[CustomQA] Delaying audio playback by ' + delayMs + 'ms');
+                    setTimeout(playSound, delayMs);
+                } else {
+                    playSound();
                 }
 
-                currentAudio = source;
-                currentPlayingButton = buttonElement;
-                return source;
-
+                return null;
             } catch (error) {
                 console.error('Error playing audio with Web Audio API:', error);
+                isPlayingAd = false; // Reset semaphore on error
                 if (buttonElement) {
                     setButtonToSpeakerIcon(buttonElement);
                 }
@@ -423,8 +454,17 @@
                         try {
                             const docPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}`;
                             
+                            // Build updateMask to preserve other fields (email, etc)
+                            const maskParams = new URLSearchParams();
+                            maskParams.append('key', window.firebaseConfig.apiKey);
+                            ['adVolume', 'adSpeed', 'adGender', 'adVoice', 'adLength', 'adFrequency',
+                             'adEmphasis', 'adColorPreference', 'adNarrationStyle', 'adPauseDuringAd',
+                             'vqaVolume', 'vqaSpeed', 'vqaGender', 'vqaLength', 'updatedAt'].forEach(field => {
+                                maskParams.append('updateMask.fieldPaths', field);
+                            });
+                            
                             const response = await fetch(
-                                `https://firestore.googleapis.com/v1/${docPath}?key=${window.firebaseConfig.apiKey}`,
+                                `https://firestore.googleapis.com/v1/${docPath}?${maskParams.toString()}`,
                                 {
                                     method: 'PATCH',
                                     headers: {
@@ -897,7 +937,7 @@
                 (async () => {
                     const user = window.FirebaseAPI?.getCurrentUser();
                     if (user) {
-                        console.log('[CustomQA] ✓ User logged in:', {
+                        console.log('[CustomQA] User logged in:', {
                             uid: user.uid,
                             email: user.email,
                             role: user.role || 'guest'
@@ -907,7 +947,7 @@
                         try {
                             const settings = await window.DatabaseIntegration?.loadUserSettings();
                             if (settings) {
-                                console.log('[CustomQA] ✓ User settings loaded successfully');
+                                console.log('[CustomQA] User settings loaded successfully');
                             } else {
                                 console.warn('[CustomQA] ⚠ User settings not found or empty');
                             }
@@ -1212,6 +1252,17 @@
 
                     // Load previous ADs for this video
                     const videoUrl = window.location.href;
+                    // Initialize currentVideoUrl when the video loads
+                    const previousVideoUrl = currentVideoUrl;
+                    currentVideoUrl = videoUrl;
+                    
+                    // Clear adSchedule if switching to a different video
+                    if (previousVideoUrl && previousVideoUrl !== videoUrl) {
+                        adSchedule = [];
+                        adScheduleVideoUrl = null;
+                        console.log('[CustomQA] Video changed, cleared adSchedule');
+                    }
+                    
                     const videoIdFromUrl = videoUrl.split('v=')[1]?.split('&')[0];
                     console.log('[CustomQA] ========== VIDEO LOAD CHECK ==========');
                     console.log('[CustomQA] Current user:', user?.uid, user?.email);
@@ -1224,7 +1275,13 @@
                         
                         if (previousAD && previousAD.generatedAds && previousAD.generatedAds.length > 0) {
                             hasExistingAD = true;
-                            console.log('[CustomQA] ✓ Displaying', previousAD.generatedAds.length, 'AD(s)');
+                            // If loading ADs for a different video, clear cache
+                            if (currentVideoUrl !== videoUrl) {
+                                console.log('[CustomQA] Video changed, clearing cache');
+                                clearAudioCache();
+                                currentVideoUrl = videoUrl;
+                            }
+                            console.log('[CustomQA] Displaying', previousAD.generatedAds.length, 'AD(s)');
                             
                             // Restore settings that were used when this AD was generated
                             if (previousAD.customizations) {
@@ -1237,6 +1294,15 @@
                             
                             if (adMessages) {
                                 adMessages.innerHTML = '';
+                                
+                                // Auto-pause from start if Pause During AD is ON
+                                const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                                if (pauseAdButton && video) {
+                                    console.log('[CustomQA] Auto-pausing from start for first AD (loaded)');
+                                    video.currentTime = 0;
+                                    video.pause();
+                                    window.shouldResumeAfterFirstAD = true;
+                                }
                                 
                                 // Add metadata badge showing when this was created
                                 const metadataBadge = document.createElement('div');
@@ -1277,6 +1343,8 @@
                                     speakerBtn.id = `ad-speaker-btn-loaded-${index}`;
                                     setButtonToSpeakerIcon(speakerBtn);
                                     speakerBtn.setAttribute('data-text', desc.description);
+                                    speakerBtn.setAttribute('data-timestamp', currentTs);
+                                    speakerBtn.setAttribute('data-video-url', currentVideoUrl || videoUrl);
                                     speakerBtn.style.background = 'none';
                                     speakerBtn.style.border = 'none';
                                     speakerBtn.style.fontSize = '18px';
@@ -1292,19 +1360,48 @@
                                     speakerBtn.addEventListener('click', (event) => {
                                         const thisButton = event.currentTarget;
                                         
+                                        // Skip if YouTube ad is playing
+                                        if (isYouTubeAdPlaying()) {
+                                            console.log('[CustomQA] Cannot play during YouTube ad');
+                                            return;
+                                        }
+                                        
+                                        const buttonVideoUrl = thisButton.getAttribute('data-video-url');
+                                        
+                                        // Only play if this AD belongs to the current video
+                                        if (buttonVideoUrl && buttonVideoUrl !== window.location.href) {
+                                            console.log('[CustomQA] Cannot play AD from different video');
+                                            return;
+                                        }
+                                        
                                         if (currentAudio && currentPlayingButton === thisButton) {
                                             currentAudio.stop();
                                             return;
                                         }
                                         
                                         const textToSpeak = thisButton.getAttribute('data-text');
+                                        const adTimestamp = parseFloat(thisButton.getAttribute('data-timestamp')) || 0;
+                                        const videoTime = video?.currentTime || 0;
+                                        const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                                        const isPauseOn = pauseAdButton !== null;
+                                        
+                                        let delayMs = 0;
+                                        if (isPauseOn) {
+                                            // Pause is ON: 1 second delay before audio
+                                            delayMs = 1000;
+                                        } else {
+                                            // Pause is OFF: play audio 5 seconds before the AD timestamp
+                                            const timeUntilAd = (adTimestamp - videoTime) * 1000; // Convert to ms
+                                            delayMs = Math.max(0, timeUntilAd - 5000); // Play 5s before
+                                        }
+                                        
                                         chrome.runtime.sendMessage({
                                             type: 'CALL_OPENAI_TTS',
                                             text: textToSpeak,
                                             gender: gender
                                         }, (ttsResponse) => {
                                             if (ttsResponse && ttsResponse.success) {
-                                                playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
+                                                playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, delayMs);
                                             } else {
                                                 console.error('OpenAI TTS error:', ttsResponse?.error);
                                             }
@@ -1315,7 +1412,72 @@
                                     messageContainer.appendChild(speakerBtn);
                                     adMessages.appendChild(messageContainer);
                                 });
-                                console.log('[CustomQA] ✓ AD bubbles displayed');
+                                console.log('[CustomQA] AD bubbles displayed');
+                                
+                                // Populate adSchedule with loaded ADs for timeupdate auto-play
+                                adSchedule = descriptions.map((desc, index) => ({
+                                    timestamp: desc.timestamp_in_seconds,
+                                    description: desc.description,
+                                    played: true, // Mark all previously loaded ADs as already played to avoid auto-playing old content
+                                    buttonId: `ad-speaker-btn-loaded-${index}`
+                                }));
+                                adScheduleVideoUrl = videoUrl; // Track video for this schedule
+                                console.log('[CustomQA] AD schedule populated with', adSchedule.length, 'ADs (marked as played for returning visits)');
+                                
+                                // Auto-preload all previously loaded AD audio
+                                setTimeout(() => {
+                                    console.log('[CustomQA] Preloading all previously loaded AD audio...');
+                                    const genderBtn = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
+                                    const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                                    
+                                    const allAdButtons = sidebar.querySelectorAll('#ad-messages [id$="-loaded-"] button[data-text]');
+                                    allAdButtons.forEach(btn => {
+                                        const text = btn.getAttribute('data-text');
+                                        if (text && !preloadedAudioMap.has(text)) {
+                                            preloadAndStoreAudio(text, btn, gender);
+                                        }
+                                    });
+                                }, 100);
+                                
+                                // Auto-play first AD if Audio Description toggle is ON (only in AD tab)
+                                setTimeout(() => {
+                                    const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                                    // Only auto-play in AD tab, not in VQA tab
+                                    if (activeTab && activeTab.id !== 'audio-descriptions-tab') {
+                                        console.log('[CustomQA] Not in AD tab, skipping auto-play');
+                                        return;
+                                    }
+                                    
+                                    // Find the Audio Description toggle buttons in CUSTOMIZATION SETUPS
+                                    const allButtonGroups = sidebar.querySelectorAll('.button-group');
+                                    let adToggleGroup = null;
+                                    
+                                    allButtonGroups.forEach(group => {
+                                        const label = group.parentElement?.querySelector('.subsection-title');
+                                        if (label && label.textContent.includes('Audio Description')) {
+                                            adToggleGroup = group;
+                                        }
+                                    });
+                                    
+                                    if (adToggleGroup) {
+                                        const onButton = Array.from(adToggleGroup.querySelectorAll('.pill-button')).find(b => b.textContent.trim() === 'ON');
+                                        if (onButton?.classList.contains('active')) {
+                                            const firstSpeaker = sidebar.querySelector('#ad-speaker-btn-loaded-0');
+                                            if (firstSpeaker) {
+                                                console.log('[CustomQA] ▶ Auto-playing first AD...');
+                                                // Check if Pause During AD is ON
+                                                const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                                                if (pauseAdButton) {
+                                                    console.log('[CustomQA] Pausing video for first AD...');
+                                                    video.pause();
+                                                    // Set flag to resume after first AD finishes
+                                                    window.shouldResumeAfterFirstAD = true;
+                                                }
+                                                firstSpeaker.click();
+                                            }
+                                        }
+                                    }
+                                }, 300);
                             } else {
                                 console.warn('[CustomQA] ✗ AD container NOT found - bubbles cannot display');
                             }
@@ -1333,7 +1495,7 @@
                         
                         if (previousVQA && previousVQA.messages && previousVQA.messages.length > 0) {
                             hasExistingVQA = true;
-                            console.log('[CustomQA] ✓ Displaying', previousVQA.messages.length, 'VQA message(s)');
+                            console.log('[CustomQA] Displaying', previousVQA.messages.length, 'VQA message(s)');
                             
                             const vqaMessages = sidebar.querySelector('.vqa-sub-tab-content .chat-messages');
                             console.log('[CustomQA] VQA container found:', !!vqaMessages);
@@ -1378,21 +1540,145 @@
                                 
                                 // Display questions first (blue bubbles)
                                 questions.forEach(q => {
+                                    const userMessageContainer = document.createElement('div');
+                                    userMessageContainer.style.display = 'flex';
+                                    userMessageContainer.style.alignItems = 'flex-start';
+                                    userMessageContainer.style.gap = '8px';
+                                    userMessageContainer.style.marginBottom = '12px';
+                                    userMessageContainer.style.justifyContent = 'flex-end';
+                                    
                                     const message = document.createElement('div');
                                     message.className = 'chat-message user-message';
+                                    message.style.flex = '1';
                                     message.textContent = q.content || q.text || '';
-                                    vqaMessages.appendChild(message);
+                                    
+                                    const userSpeakerBtn = document.createElement('button');
+                                    setButtonToSpeakerIcon(userSpeakerBtn);
+                                    userSpeakerBtn.setAttribute('data-text', q.content || q.text || '');
+                                    userSpeakerBtn.style.background = 'none';
+                                    userSpeakerBtn.style.border = 'none';
+                                    userSpeakerBtn.style.fontSize = '18px';
+                                    userSpeakerBtn.style.cursor = 'pointer';
+                                    userSpeakerBtn.style.padding = '0';
+                                    userSpeakerBtn.style.marginTop = '8px';
+                                    userSpeakerBtn.style.opacity = '0.5';
+                                    userSpeakerBtn.style.transition = 'opacity 0.2s';
+                                    
+                                    userSpeakerBtn.addEventListener('mouseover', () => userSpeakerBtn.style.opacity = '1');
+                                    userSpeakerBtn.addEventListener('mouseout', () => userSpeakerBtn.style.opacity = '0.5');
+                                    
+                                    userSpeakerBtn.addEventListener('click', (event) => {
+                                        const thisButton = event.currentTarget;
+                                        
+                                        // Skip if YouTube ad is playing (to prevent audio conflicts)
+                                        if (isYouTubeAdPlaying()) {
+                                            console.log('[CustomQA] Cannot play during YouTube ad');
+                                            return;
+                                        }
+                                        
+                                        if (currentAudio && currentPlayingButton === thisButton) {
+                                            currentAudio.stop();
+                                            return;
+                                        }
+                                        const genderBtn = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                        const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                                        const textToSpeak = thisButton.getAttribute('data-text');
+                                        chrome.runtime.sendMessage({
+                                            type: 'CALL_OPENAI_TTS',
+                                            text: textToSpeak,
+                                            gender: gender
+                                        }, (ttsResponse) => {
+                                            if (ttsResponse && ttsResponse.success) {
+                                                playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
+                                            } else {
+                                                console.error('OpenAI TTS error:', ttsResponse?.error);
+                                            }
+                                        });
+                                    });
+                                    
+                                    userMessageContainer.appendChild(message);
+                                    userMessageContainer.appendChild(userSpeakerBtn);
+                                    vqaMessages.appendChild(userMessageContainer);
                                 });
                                 
                                 // Display answers next (gray bubbles)
                                 answers.forEach(a => {
+                                    const aiMessageContainer = document.createElement('div');
+                                    aiMessageContainer.style.display = 'flex';
+                                    aiMessageContainer.style.alignItems = 'flex-start';
+                                    aiMessageContainer.style.gap = '8px';
+                                    aiMessageContainer.style.marginBottom = '12px';
+                                    
                                     const message = document.createElement('div');
                                     message.className = 'chat-message bot-message';
+                                    message.style.flex = '1';
                                     message.textContent = a.content || a.text || '';
-                                    vqaMessages.appendChild(message);
+                                    
+                                    const answerSpeakerBtn = document.createElement('button');
+                                    setButtonToSpeakerIcon(answerSpeakerBtn);
+                                    answerSpeakerBtn.setAttribute('data-text', a.content || a.text || '');
+                                    answerSpeakerBtn.style.background = 'none';
+                                    answerSpeakerBtn.style.border = 'none';
+                                    answerSpeakerBtn.style.fontSize = '18px';
+                                    answerSpeakerBtn.style.cursor = 'pointer';
+                                    answerSpeakerBtn.style.padding = '0';
+                                    answerSpeakerBtn.style.marginTop = '8px';
+                                    answerSpeakerBtn.style.opacity = '0.5';
+                                    answerSpeakerBtn.style.transition = 'opacity 0.2s';
+                                    
+                                    answerSpeakerBtn.addEventListener('mouseover', () => answerSpeakerBtn.style.opacity = '1');
+                                    answerSpeakerBtn.addEventListener('mouseout', () => answerSpeakerBtn.style.opacity = '0.5');
+                                    
+                                    answerSpeakerBtn.addEventListener('click', (event) => {
+                                        const thisButton = event.currentTarget;
+                                        
+                                        // Skip if YouTube ad is playing (to prevent audio conflicts)
+                                        if (isYouTubeAdPlaying()) {
+                                            console.log('[CustomQA] Cannot play during YouTube ad');
+                                            return;
+                                        }
+                                        
+                                        if (currentAudio && currentPlayingButton === thisButton) {
+                                            currentAudio.stop();
+                                            return;
+                                        }
+                                        const genderBtn = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                        const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                                        const textToSpeak = thisButton.getAttribute('data-text');
+                                        chrome.runtime.sendMessage({
+                                            type: 'CALL_OPENAI_TTS',
+                                            text: textToSpeak,
+                                            gender: gender
+                                        }, (ttsResponse) => {
+                                            if (ttsResponse && ttsResponse.success) {
+                                                playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
+                                            } else {
+                                                console.error('OpenAI TTS error:', ttsResponse?.error);
+                                            }
+                                        });
+                                    });
+                                    
+                                    aiMessageContainer.appendChild(message);
+                                    aiMessageContainer.appendChild(answerSpeakerBtn);
+                                    vqaMessages.appendChild(aiMessageContainer);
                                 });
                                 
                                 console.log('[CustomQA] VQA display complete - Questions:', questions.length, 'Answers:', answers.length);
+                                
+                                // Auto-preload all displayed VQA audio
+                                setTimeout(() => {
+                                    console.log('[CustomQA] Preloading all previously loaded VQA audio...');
+                                    const genderBtn = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                    const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                                    
+                                    const allVqaButtons = sidebar.querySelectorAll('.vqa-sub-tab-content [role="tabpanel"] button[data-text]');
+                                    allVqaButtons.forEach(btn => {
+                                        const text = btn.getAttribute('data-text');
+                                        if (text && !preloadedAudioMap.has(text)) {
+                                            preloadAndStoreAudio(text, btn, gender);
+                                        }
+                                    });
+                                }, 100);
                             } else {
                                 console.warn('[CustomQA] ✗ VQA container NOT found - bubbles cannot display');
                             }
@@ -1415,87 +1701,9 @@
                     }
                 }
 
-                // Handle AD save
-                const adSaveBtn = sidebar.querySelector('#ad-save-button');
-                if (adSaveBtn) {
-                    adSaveBtn.addEventListener('click', async () => {
-                        const user = window.FirebaseAPI?.getCurrentUser();
-                        if (!user) {
-                            alert('Please log in to save settings');
-                            return;
-                        }
+                // AD settings are now auto-captured on generation - no save button needed
 
-                        adSaveBtn.disabled = true;
-                        adSaveBtn.textContent = 'SAVING...';
-
-                        try {
-                            const customizations = {
-                                volume: sidebar.querySelector('#ad-volume-slider')?.value || 50,
-                                speed: sidebar.querySelector('#ad-speed-slider')?.value || 50,
-                                length: sidebar.querySelector('#length-slider')?.value || 25,
-                                frequency: sidebar.querySelector('[data-frequency].active')?.dataset?.frequency || 'sometimes',
-                                emphasis: sidebar.querySelector('[data-emphasis].active')?.dataset?.emphasis || 'balanced',
-                                colorPreference: sidebar.querySelector('[data-color].active')?.dataset?.color || 'on',
-                                narrationStyle: sidebar.querySelector('[data-narration].active')?.dataset?.narration || 'objective',
-                                gender: sidebar.querySelector('[data-gender].active')?.dataset?.gender || 'female'
-                            };
-
-                            const success = await window.DatabaseIntegration.saveADSettings(customizations);
-                            if (success) {
-                                adSaveBtn.textContent = 'SAVED ✓';
-                                setTimeout(() => {
-                                    adSaveBtn.textContent = 'SAVE CHANGES';
-                                    adSaveBtn.disabled = false;
-                                }, 2000);
-                            } else {
-                                throw new Error('Failed to save');
-                            }
-                        } catch (error) {
-                            alert('Failed to save settings: ' + error.message);
-                            adSaveBtn.textContent = 'SAVE CHANGES';
-                            adSaveBtn.disabled = false;
-                        }
-                    });
-                }
-
-                // Save VQA settings
-                const vqaSaveBtn = sidebar.querySelector('[aria-label="Save Changes"]');
-                if (vqaSaveBtn) {
-                    vqaSaveBtn.addEventListener('click', async () => {
-                        const user = window.FirebaseAPI?.getCurrentUser();
-                        if (!user) {
-                            alert('Please log in to save settings');
-                            return;
-                        }
-
-                        vqaSaveBtn.disabled = true;
-                        vqaSaveBtn.textContent = 'SAVING...';
-
-                        try {
-                            const customizations = {
-                                volume: sidebar.querySelector('#vqa-volume-slider')?.value || 50,
-                                speed: sidebar.querySelector('#vqa-speed-slider')?.value || 50,
-                                length: sidebar.querySelector('#vqa-length-slider')?.value || 25,
-                                gender: sidebar.querySelector('#vqa-gender-group .active')?.dataset?.gender || 'female'
-                            };
-
-                            const success = await window.DatabaseIntegration.saveVQASettings(customizations);
-                            if (success) {
-                                vqaSaveBtn.textContent = 'SAVED ✓';
-                                setTimeout(() => {
-                                    vqaSaveBtn.textContent = 'SAVE CHANGES';
-                                    vqaSaveBtn.disabled = false;
-                                }, 2000);
-                            } else {
-                                throw new Error('Failed to save');
-                            }
-                        } catch (error) {
-                            alert('Failed to save settings: ' + error.message);
-                            vqaSaveBtn.textContent = 'SAVE CHANGES';
-                            vqaSaveBtn.disabled = false;
-                        }
-                    });
-                }
+                // VQA settings are now synced automatically - no need for save button
 
                 // Load and set volume for both sliders
                 const adVolumeSlider = sidebar.querySelector('#ad-volume-slider');
@@ -1512,6 +1720,124 @@
                     }
                 };
 
+                // Helper function to get ALL current settings from a tab
+                const getAllSettings = (tab) => {
+                    const isADTab = tab.id === 'audio-descriptions-tab';
+                    const settings = {};
+                    
+                    // Presentation Customization
+                    const volumeSlider = tab.querySelector('[id*="volume-slider"]');
+                    const speedSlider = tab.querySelector('[id*="speed-slider"]');
+                    const genderBtn = tab.querySelector('.pill-button[data-gender].active');
+                    const voiceBtn = tab.querySelector('.pill-button[data-voice].active');
+                    
+                    if (isADTab) {
+                        settings.volume = volumeSlider ? parseInt(volumeSlider.value) : 50;
+                        settings.speed = speedSlider ? parseInt(speedSlider.value) : 50;
+                        settings.gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                        settings.voice = voiceBtn ? voiceBtn.dataset.voice : 'human';
+                        
+                        // Content Customization
+                        const lengthSlider = tab.querySelector('#length-slider');
+                        const frequencyBtn = tab.querySelector('.pill-button[data-frequency].active');
+                        const emphasisBtn = tab.querySelector('.pill-button[data-emphasis].active');
+                        const colorBtn = tab.querySelector('.pill-button[data-color].active');
+                        const narrationBtn = tab.querySelector('.pill-button[data-narration].active');
+                        
+                        settings.length = lengthSlider ? parseInt(lengthSlider.value) : 25;
+                        settings.frequency = frequencyBtn ? frequencyBtn.dataset.frequency : 'sometimes';
+                        settings.emphasis = emphasisBtn ? emphasisBtn.dataset.emphasis : 'balanced';
+                        settings.colorPreference = colorBtn ? colorBtn.dataset.color : 'on';
+                        settings.narrationStyle = narrationBtn ? narrationBtn.dataset.narration : 'objective';
+                        
+                        // Customization Setups
+                        const pauseBtn = tab.querySelector('#pause-ad-group .pill-button.active');
+                        settings.pauseDuringAd = pauseBtn ? pauseBtn.dataset.action === 'pause-on' : true;
+                    } else {
+                        // VQA Tab
+                        settings.volume = volumeSlider ? parseInt(volumeSlider.value) : 50;
+                        settings.speed = speedSlider ? parseInt(speedSlider.value) : 50;
+                        settings.gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                        settings.voice = voiceBtn ? voiceBtn.dataset.voice : 'human';
+                        
+                        // Content Customization (Length/Time Window)
+                        const lengthSlider = tab.querySelector('[id*="length-slider"]');
+                        settings.length = lengthSlider ? parseInt(lengthSlider.value) : 25;
+                    }
+                    
+                    return settings;
+                };
+
+                // Helper function to save ALL settings to Firestore
+                const saveAllSettings = async (tab) => {
+                    if (!tab) {
+                        console.warn('[CustomQA] No active tab provided to saveAllSettings');
+                        return;
+                    }
+                    
+                    const settings = getAllSettings(tab);
+                    const isADTab = tab.id === 'audio-descriptions-tab';
+                    
+                    try {
+                        console.log('[CustomQA] Attempting to save settings:', { isADTab, settings });
+                        if (isADTab) {
+                            const result = await window.DatabaseIntegration?.saveADSettings(settings);
+                            if (!result?.success) {
+                                console.error('[CustomQA] ✗ Failed to save AD settings:', result);
+                            }
+                        } else {
+                            const result = await window.DatabaseIntegration?.saveVQASettings(settings);
+                            if (!result?.success) {
+                                console.error('[CustomQA] ✗ Failed to save VQA settings:', result);
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[CustomQA] Error in saveAllSettings:', error);
+                    }
+                };
+
+                // Helper function to completely clear audio cache and remove attributes
+                const clearAudioCache = () => {
+                    console.log('[CustomQA] 🔄 Clearing audio cache from all sources...');
+                    preloadedAudioMap.clear();
+                    // Also remove data-audio-url attributes from all buttons
+                    const allButtons = sidebar.querySelectorAll('button[data-audio-url]');
+                    allButtons.forEach(btn => btn.removeAttribute('data-audio-url'));
+                };
+
+                // Function to preload all visible audio when settings change
+                const preloadAllVisibleAudio = () => {
+                    // Get current gender setting
+                    const genderBtnAD = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
+                    const genderBtnVQA = sidebar.querySelector('#vqa-gender-group .pill-button[data-gender].active');
+                    const genderAD = genderBtnAD ? genderBtnAD.dataset.gender : 'female';
+                    const genderVQA = genderBtnVQA ? genderBtnVQA.dataset.gender : 'female';
+                    
+                    // Preload AD audio
+                    const adSpeakerButtons = sidebar.querySelectorAll('#ad-messages [id^="ad-speaker-btn"]');
+                    adSpeakerButtons.forEach(btn => {
+                        const text = btn.getAttribute('data-text');
+                        if (text) {
+                            // Always preload (don't check for existing data-audio-url)
+                            console.log('[CustomQA] Preloading AD audio for:', text.substring(0, 30) + '...');
+                            preloadAndStoreAudio(text, btn, genderAD);
+                        }
+                    });
+                    
+                    // Preload VQA audio (both questions and answers)
+                    const vqaSpeakerButtons = sidebar.querySelectorAll('#chat-tab [role="tabpanel"] button[data-text]');
+                    vqaSpeakerButtons.forEach(btn => {
+                        const text = btn.getAttribute('data-text');
+                        if (text) {
+                            // Always preload (don't check for existing data-audio-url)
+                            console.log('[CustomQA] Preloading VQA audio for:', text.substring(0, 30) + '...');
+                            preloadAndStoreAudio(text, btn, genderVQA);
+                        }
+                    });
+                    
+                    console.log('[CustomQA] Preloading all visible audio...');
+                };
+
                 chrome.storage.sync.get('volume', (data) => {
                     if (data.volume) {
                         setSliderValues(data.volume);
@@ -1522,13 +1848,31 @@
                     const newVolume = e.target.value;
                     chrome.storage.sync.set({ volume: newVolume });
                     setSliderValues(newVolume); // Keep sliders in sync
+                    // Update currentVolume for immediate playback changes
+                    currentVolume = parseFloat(newVolume) / 100;
+                    console.log('[CustomQA] Volume updated to:', currentVolume);
+                    
+                    // Clear preloaded audio cache and regenerate with new volume
+                    clearAudioCache();
+                    
+                    // Save all settings when volume changes
+                    const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                    if (activeTab) {
+                        saveAllSettings(activeTab);
+                        // Preload all audio with new settings after a brief delay
+                        setTimeout(() => {
+                            preloadAllVisibleAudio();
+                        }, 50);
+                    }
                 };
 
                 if (adVolumeSlider) {
                     adVolumeSlider.addEventListener('input', volumeChangeHandler);
+                    adVolumeSlider.addEventListener('input', preloadAllVisibleAudio);
                 }
                 if (vqaVolumeSlider) {
                     vqaVolumeSlider.addEventListener('input', volumeChangeHandler);
+                    vqaVolumeSlider.addEventListener('input', preloadAllVisibleAudio);
                 }
 
                 const vqaBadgeButton = sidebar.querySelector('.vqa-badge');
@@ -1640,11 +1984,35 @@
                 if (lengthSlider) {
                     lengthSlider.addEventListener('input', (e) => {
                         syncLengthSliders(e.target);
+                        // Clear preloaded audio cache when length changes
+                        console.log('[CustomQA] 🔄 Clearing audio cache for length change...');
+                        preloadedAudioMap.clear();
+                        // Save settings when length changes
+                        const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                        if (activeTab) {
+                            saveAllSettings(activeTab);
+                            // Preload all audio with new settings after a brief delay
+                            setTimeout(() => {
+                                preloadAllVisibleAudio();
+                            }, 50);
+                        }
                     });
                 }
                 if (vqaLengthSlider) {
                     vqaLengthSlider.addEventListener('input', (e) => {
                         syncLengthSliders(e.target);
+                        // Clear preloaded audio cache when length changes
+                        console.log('[CustomQA] 🔄 Clearing audio cache for length change...');
+                        preloadedAudioMap.clear();
+                        // Save settings when length changes
+                        const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                        if (activeTab) {
+                            saveAllSettings(activeTab);
+                            // Preload all audio with new settings after a brief delay
+                            setTimeout(() => {
+                                preloadAllVisibleAudio();
+                            }, 50);
+                        }
                     });
                 }
 
@@ -1667,11 +2035,39 @@
                 if (adSpeedSlider) {
                     adSpeedSlider.addEventListener('input', (e) => {
                         syncSpeedSliders(e.target);
+                        
+                        // Clear preloaded audio cache and regenerate with new speed
+                        console.log('[CustomQA] 🔄 Clearing audio cache for speed change...');
+                        preloadedAudioMap.clear();
+                        
+                        // Save all settings when speed changes
+                        const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                        if (activeTab) {
+                            saveAllSettings(activeTab);
+                            // Preload all audio with new settings after a brief delay
+                            setTimeout(() => {
+                                preloadAllVisibleAudio();
+                            }, 50);
+                        }
                     });
                 }
                 if (vqaSpeedSlider) {
                     vqaSpeedSlider.addEventListener('input', (e) => {
                         syncSpeedSliders(e.target);
+                        
+                        // Clear preloaded audio cache and regenerate with new speed
+                        console.log('[CustomQA] 🔄 Clearing audio cache for speed change...');
+                        preloadedAudioMap.clear();
+                        
+                        // Save all settings when speed changes
+                        const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                        if (activeTab) {
+                            saveAllSettings(activeTab);
+                            // Preload all audio with new settings after a brief delay
+                            setTimeout(() => {
+                                preloadAllVisibleAudio();
+                            }, 50);
+                        }
                     });
                 }
 
@@ -1717,25 +2113,52 @@
                             const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                             const otherTab = sidebar.querySelector('.tab-content[style*="display: none"]');
                             syncPresentationSettings(activeTab, otherTab);
+                            // When gender changes, immediately clear cache and preload with new gender
+                            console.log('[CustomQA] 🔄 Gender changed - clearing preloaded audio cache...');
+                            clearAudioCache(); // Clear cache so audio regenerates with new gender
+                            preloadAllVisibleAudio();
+                            // Save all settings when gender changes
+                            if (activeTab) {
+                                saveAllSettings(activeTab);
+                            }
+                        }
+                        
+                        // Handle Audio Description toggle - stop playback if OFF is selected
+                        const label = subsectionTitleElement?.textContent.trim();
+                        if (label?.includes('Audio Description')) {
+                            if (button.textContent.trim() === 'OFF' && button.classList.contains('active')) {
+                                // User chose OFF - stop current audio
+                                if (currentAudio) {
+                                    console.log('[CustomQA] Audio Description OFF - stopping playback');
+                                    try {
+                                        currentAudio.stop();
+                                    } catch (e) {
+                                        console.log('[CustomQA] Audio already stopped');
+                                    }
+                                    currentAudio = null;
+                                    if (currentPlayingButton) {
+                                        setButtonToSpeakerIcon(currentPlayingButton);
+                                        currentPlayingButton = null;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Save settings for ANY pill button click (frequency, emphasis, color, narration, pause, etc.)
+                        // Automatically save when any setting changes
+                        const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                        if (activeTab && (button.dataset.frequency || button.dataset.emphasis || button.dataset.color || button.dataset.narration || button.dataset.action)) {
+                            console.log('[CustomQA] Setting changed:', button.dataset);
+                            // Clear preloaded audio cache for content customization changes
+                            clearAudioCache();
+                            saveAllSettings(activeTab);
+                            // Preload all audio with new settings after a brief delay
+                            setTimeout(() => {
+                                preloadAllVisibleAudio();
+                            }, 50);
                         }
                     }
                 });
-
-                const pauseAdGroup = sidebar.querySelector('#pause-ad-group');
-                const audioDuckingSection = sidebar.querySelector('#audio-ducking-section');
-
-                if (pauseAdGroup && audioDuckingSection) {
-                    pauseAdGroup.addEventListener('click', (e) => {
-                        if (e.target.classList.contains('pill-button')) {
-                            const action = e.target.dataset.action;
-                            if (action === 'pause-off') {
-                                audioDuckingSection.style.display = 'block';
-                            } else if (action === 'pause-on') {
-                                audioDuckingSection.style.display = 'none';
-                            }
-                        }
-                    });
-                }
 
                 // Chat Speech-to-text
                 let isListeningChatMicButton = false;
@@ -1782,6 +2205,30 @@
                             } catch (error) {
                                 console.error('Error playing activation sound:', error);
                             }
+                            
+                            // Auto-play what the user just said
+                            setTimeout(() => {
+                                const chatInput = sidebar.querySelector('.chat-input');
+                                const textToSpeak = chatInput.value;
+                                const genderBtn = sidebar.querySelector('#vqa-gender-group .pill-button.active');
+                                const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                                
+                                if (textToSpeak && textToSpeak.trim()) {
+                                    console.log('[CustomQA] Auto-playing recorded question...');
+                                    chrome.runtime.sendMessage({
+                                        type: 'CALL_OPENAI_TTS',
+                                        text: textToSpeak,
+                                        gender: gender
+                                    }, (ttsResponse) => {
+                                        if (ttsResponse && ttsResponse.success) {
+                                            // Use chat speaker button instead of mic button for playback
+                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, chatSpeakerButton);
+                                        } else {
+                                            console.error('OpenAI TTS error:', ttsResponse?.error);
+                                        }
+                                    });
+                                }
+                            }, 200);
                         };
 
                         recognitionChatMicButton.onerror = (event) => {
@@ -1796,6 +2243,12 @@
                 const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
                 chatSpeakerButton.addEventListener('click', (event) => {
                     const thisButton = event.currentTarget;
+                    
+                    // Skip if YouTube ad is playing (to prevent audio conflicts)
+                    if (isYouTubeAdPlaying()) {
+                        console.log('[CustomQA] Cannot play during YouTube ad');
+                        return;
+                    }
 
                     if (currentAudio && currentPlayingButton === thisButton) {
                         currentAudio.stop();
@@ -1829,6 +2282,7 @@
                 });
 
                 let adSchedule = [];
+                let adScheduleVideoUrl = null; // Track which video the adSchedule belongs to
 
                 const captureVideoFrame = async (timeInSeconds) => {
                     return new Promise((resolve, reject) => {
@@ -1866,14 +2320,33 @@
                     }
                     
                     generateAdButton.addEventListener('click', async () => {
+                        // Save current customization settings to user document
+                        const user = window.FirebaseAPI?.getCurrentUser();
+                        if (user && window.FirebaseAPI) {
+                            const currentSettings = {
+                                adVolume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 50),
+                                adSpeed: parseInt(sidebar.querySelector('#ad-speed-slider')?.value || 50),
+                                adGender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
+                                adVoice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'natural',
+                                adLength: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
+                                adFrequency: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-frequency].active')?.dataset.frequency || 'sometimes',
+                                adEmphasis: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
+                                adColorPreference: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-color].active')?.dataset.color || 'on',
+                                adNarration: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-narration].active')?.dataset.narration || 'objective',
+                                adPauseDuringAd: sidebar.querySelector('#pause-ad-group .pill-button.active')?.dataset.action === 'pause-on'
+                            };
+                            await window.FirebaseAPI.saveSettings(user.uid, currentSettings);
+                            console.log('[CustomQA] Settings saved on generate');
+                        }
                         // Clear previous ADs immediately
                         adSchedule = [];
+                        adScheduleVideoUrl = null; // Clear video context when generating new ADs
                         const adMessages = sidebar.querySelector('#ad-messages');
                         if (adMessages) {
                             adMessages.innerHTML = '';
                         }
                         // Clear preloaded audio for old ADs
-                        preloadedAudioMap.clear();
+                        clearAudioCache();
                         // Stop any currently playing audio
                         if (currentAudio) {
                             currentAudio.stop();
@@ -1883,6 +2356,11 @@
                                 currentPlayingButton = null;
                             }
                         }
+                        
+                        // Update current video URL
+                        
+                        // Update current video URL
+                        currentVideoUrl = window.location.href;
                         
                         if (isAdGenerationRunning) {
                             cancelAdGeneration = true;
@@ -1991,8 +2469,11 @@
 
                             if (response && response.success) {
                                 console.log('AD Generation successful:', response.text);
-                                // Strip markdown and parse
-                                const jsonString = response.text.replace(/```json\n|```/g, '');
+                                // Strip markdown and parse - more robust cleanup
+                                let jsonString = response.text.trim();
+                                // Remove markdown code blocks
+                                jsonString = jsonString.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+                                jsonString = jsonString.trim();
                                 const adData = JSON.parse(jsonString);
                                 
                                 let descriptions = [];
@@ -2004,11 +2485,13 @@
                                     descriptions = adData.VideoMetadata.AudioDescriptions;
                                 }
 
-                                adSchedule = descriptions.map(desc => ({
+                                adSchedule = descriptions.map((desc, index) => ({
                                     timestamp: (desc.timestamp_ms || desc.timestamp_in_seconds * 1000) / 1000,
                                     description: desc.description,
-                                    played: false
+                                    played: false,
+                                    buttonId: `ad-speaker-btn-${index}`
                                 }));
+                                adScheduleVideoUrl = window.location.href; // Track video for this schedule
 
                                 generateAdButton.textContent = 'Preloading audio...';
 
@@ -2032,6 +2515,16 @@
 
                                 Promise.all(preloadPromises).then(async () => {
                                     console.log('All audio preloaded');
+                                    
+                                    // Auto-pause from start if Pause During AD is ON
+                                    const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                                    if (pauseAdButton && video) {
+                                        console.log('[CustomQA] Auto-pausing from start for first AD');
+                                        video.currentTime = 0;
+                                        video.pause();
+                                        window.shouldResumeAfterFirstAD = true;
+                                    }
+                                    
                                     displayAdBubbles(adSchedule);
                                     
                                     // Save generated ADs to Firestore if user is logged in
@@ -2069,11 +2562,20 @@
                                     }
                                     
                                     video.currentTime = 0; // Restart video to apply ADs
-                                    // Wait for seek to complete, then play
+                                    // Wait for seek to complete, then check pause setting
                                     const handleSeeked = () => {
                                         video.removeEventListener('seeked', handleSeeked);
-                                        console.log('[AD] Video seeked to start, auto-playing...');
-                                        video.play();
+                                        console.log('[AD] Video seeked to start.');
+                                        // Check if Pause During AD is ON
+                                        const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                                        if (pauseAdButton) {
+                                            console.log('[AD] Pausing video for generated AD...');
+                                            video.pause();
+                                            window.shouldResumeAfterFirstAD = true;
+                                        } else {
+                                            console.log('[AD] Playing video...');
+                                            video.play();
+                                        }
                                     };
                                     video.addEventListener('seeked', handleSeeked);
                                 }).catch(error => {
@@ -2098,10 +2600,17 @@
                     });
                 }
 
-                const displayAdBubbles = (descriptions) => {
+                const displayAdBubbles = (descriptions, videoUrl = null) => {
                     console.log('Displaying AD bubbles:', descriptions);
                     const adMessages = sidebar.querySelector('#ad-messages');
-                    adMessages.innerHTML = '';
+                    // Only clear if not already cleared by the generation handler
+                    if (adMessages.innerHTML !== '') {
+                        adMessages.innerHTML = '';
+                    }
+                    // Update video URL if provided
+                    if (videoUrl) {
+                        currentVideoUrl = videoUrl;
+                    }
                     
                     // Add metadata badge for newly generated ADs
                     const metadataBadge = document.createElement('div');
@@ -2142,6 +2651,8 @@
                         speakerBtn.id = `ad-speaker-btn-${index}`;
                         setButtonToSpeakerIcon(speakerBtn);
                         speakerBtn.setAttribute('data-text', desc.description);
+                        speakerBtn.setAttribute('data-timestamp', currentTs);
+                        speakerBtn.setAttribute('data-video-url', currentVideoUrl || window.location.href);
                         if (preloadedAudioMap.has(desc.description)) {
                             speakerBtn.setAttribute('data-audio-url', preloadedAudioMap.get(desc.description));
                         }
@@ -2160,24 +2671,79 @@
                         speakerBtn.addEventListener('click', (event) => {
                             const thisButton = event.currentTarget;
                             
+                            // Skip if YouTube ad is playing
+                            if (isYouTubeAdPlaying()) {
+                                console.log('[CustomQA] Cannot play during YouTube ad');
+                                return;
+                            }
+                            
+                            const buttonVideoUrl = thisButton.getAttribute('data-video-url');
+                            
+                            // Only play if this AD belongs to the current video
+                            if (buttonVideoUrl && buttonVideoUrl !== window.location.href) {
+                                console.log('[CustomQA] Cannot play AD from different video');
+                                return;
+                            }
+                            
                             if (currentAudio && currentPlayingButton === thisButton) {
                                 currentAudio.stop();
                                 return;
                             }
                             
                             const textToSpeak = thisButton.getAttribute('data-text');
-                            const audioUrl = thisButton.getAttribute('data-audio-url');
+                            const cachedAudioUrl = textToSpeak && preloadedAudioMap.has(textToSpeak) ? preloadedAudioMap.get(textToSpeak) : null;
+                            const buttonAudioUrl = thisButton.getAttribute('data-audio-url');
+
+                            // Use cached audio if available, otherwise fall back to button attribute
+                            const audioUrl = cachedAudioUrl || buttonAudioUrl;
 
                             if (audioUrl) {
-                                playAudioFromDataUrl(audioUrl, thisButton);
+                                const adTimestamp = parseFloat(thisButton.getAttribute('data-timestamp')) || 0;
+                                const videoTime = video?.currentTime || 0;
+                                const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                                const isPauseOn = pauseAdButton !== null;
+                                
+                                let delayMs = 0;
+                                if (isPauseOn) {
+                                    // Pause is ON: 1 second delay before audio
+                                    delayMs = 1000;
+                                } else {
+                                    // Pause is OFF: play audio 5 seconds before the AD timestamp
+                                    const timeUntilAd = (adTimestamp - videoTime) * 1000; // Convert to ms
+                                    delayMs = Math.max(0, timeUntilAd - 5000); // Play 5s before
+                                }
+                                
+                                playAudioFromDataUrl(audioUrl, thisButton, null, delayMs);
+                                // Update button attribute with current cached URL
+                                if (cachedAudioUrl) {
+                                    thisButton.setAttribute('data-audio-url', cachedAudioUrl);
+                                }
                             } else if (textToSpeak) {
+                                const adTimestamp = parseFloat(thisButton.getAttribute('data-timestamp')) || 0;
+                                const videoTime = video?.currentTime || 0;
+                                const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                                const isPauseOn = pauseAdButton !== null;
+                                
+                                let delayMs = 0;
+                                if (isPauseOn) {
+                                    // Pause is ON: 1 second delay before audio
+                                    delayMs = 1000;
+                                } else {
+                                    // Pause is OFF: play audio 5 seconds before the AD timestamp
+                                    const timeUntilAd = (adTimestamp - videoTime) * 1000; // Convert to ms
+                                    delayMs = Math.max(0, timeUntilAd - 5000); // Play 5s before
+                                }
+                                
                                 chrome.runtime.sendMessage({
                                     type: 'CALL_OPENAI_TTS',
                                     text: textToSpeak,
                                     gender: gender
                                 }, (ttsResponse) => {
                                     if (ttsResponse && ttsResponse.success) {
-                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
+                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, delayMs);
+                                        // Cache and update button attribute
+                                        preloadedAudioMap.set(textToSpeak, ttsResponse.audioDataUrl);
+                                        thisButton.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
                                     } else {
                                         console.error('OpenAI TTS error:', ttsResponse?.error);
                                     }
@@ -2189,6 +2755,21 @@
                         messageContainer.appendChild(speakerBtn);
                         adMessages.appendChild(messageContainer);
                     });
+                    
+                    // Auto-preload all the displayed AD audio
+                    setTimeout(() => {
+                        console.log('[CustomQA] Preloading all newly displayed AD audio...');
+                        const allAdButtons = sidebar.querySelectorAll('#ad-messages [id^="ad-speaker-btn"]');
+                        const genderBtn = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
+                        const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                        
+                        allAdButtons.forEach(btn => {
+                            const text = btn.getAttribute('data-text');
+                            if (text && !preloadedAudioMap.has(text)) {
+                                preloadAndStoreAudio(text, btn, gender);
+                            }
+                        });
+                    }, 100);
                 };
 
                 const formatTime = (seconds) => {
@@ -2200,6 +2781,27 @@
                 if (video) {
                     video.addEventListener('seeked', () => {
                         const currentTime = video.currentTime;
+                        
+                        // Stop any currently playing audio when seeking
+                        if (currentAudio) {
+                            try {
+                                currentAudio.onended = null;
+                                currentAudio.stop();
+                            } catch (e) {
+                                console.error('Error stopping audio on seek:', e);
+                            }
+                            currentAudio = null;
+                            if (currentPlayingButton) {
+                                setButtonToSpeakerIcon(currentPlayingButton);
+                                currentPlayingButton = null;
+                            }
+                        }
+                        
+                        // Reset semaphore to allow new AD to play
+                        isPlayingAd = false;
+                        lastAdPlayTime = 0; // Allow immediate play of next AD
+                        
+                        // Reset played flags for ADs ahead of current position
                         adSchedule.forEach(ad => {
                             if (ad.timestamp >= currentTime) {
                                 ad.played = false;
@@ -2208,20 +2810,63 @@
                     });
 
                     video.addEventListener('timeupdate', () => {
+                        // Skip if YouTube ad is currently playing
+                        if (isYouTubeAdPlaying()) {
+                            console.log('[CustomQA] YouTube ad detected, skipping AD playback');
+                            return;
+                        }
+                        
+                        // Robust check: Only auto-play ADs when in AD tab (using both class and data attributes)
+                        const adTabButton = sidebar.querySelector('.tab-button[data-tab="audio-descriptions"].active');
+                        if (!adTabButton) {
+                            return; // Skip AD auto-play if not in AD tab
+                        }
+                        
+                        // Verify ADs belong to current video before auto-playing
+                        if (!adScheduleVideoUrl || adScheduleVideoUrl !== window.location.href) {
+                            return; // Skip if ADs are for a different video
+                        }
+                        
+                        // Prevent rapid re-triggers from scrubbing/seeking
+                        const now = Date.now();
+                        if (now - lastAdPlayTime < MIN_AD_INTERVAL) {
+                            return;
+                        }
+                        
                         if (adSchedule.length > 0) {
                             const currentTime = video.currentTime;
+                            const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                            const lookAheadWindow = 10; // Only consider ADs within 10s in the future
+                            
                             const adIndex = adSchedule.findIndex(ad => {
-                                const offset = 1;
+                                // For ADs at 0:00, play immediately without offset constraint
+                                const offset = ad.timestamp === 0 ? 0 : (pauseAdButton ? 1 : 5);
                                 const triggerTime = Math.max(0, ad.timestamp - offset);
-                                return currentTime >= triggerTime && !ad.played;
+                                // Only auto-play ADs that are coming up soon (not way in the past)
+                                return currentTime >= triggerTime && 
+                                       ad.timestamp <= currentTime + lookAheadWindow && 
+                                       !ad.played;
                             });
                             if (adIndex !== -1) {
+                                // Prevent simultaneous AD playback
+                                if (isPlayingAd) {
+                                    return;
+                                }
+                                isPlayingAd = true;
+                                
+                                // Safeguard: reset after max duration (15s) in case onended doesn't fire
+                                setTimeout(() => { isPlayingAd = false; }, 15000);
+                                
                                 const nextAd = adSchedule[adIndex];
                                 nextAd.played = true;
+                                
+                                // Update the last play time to prevent rapid re-triggers
+                                lastAdPlayTime = Date.now();
 
                                 const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
-                                // Always pause for the first AD, then respect the pause-during-ad setting
-                                if (adIndex === 0 || pauseAdButton) {
+                                // Pause if: (1) first AD AND not at 0:00, OR (2) pause-during-ad is ON
+                                const shouldPause = (adIndex === 0 && nextAd.timestamp !== 0) || pauseAdButton;
+                                if (shouldPause) {
                                     console.log('[AD] Pausing video at', currentTime, 'for AD');
                                     video.pause();
                                 }
@@ -2229,14 +2874,20 @@
                                 const genderBtnAD = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
                                 const gender = genderBtnAD ? genderBtnAD.dataset.gender : 'female';
                                 
-                                const speakerBtn = sidebar.querySelector(`#ad-speaker-btn-${adIndex}`);
+                                const speakerBtn = sidebar.querySelector(`#${nextAd.buttonId}`);
+                                if (!speakerBtn) {
+                                    console.error('[AD] Speaker button not found for AD:', nextAd.buttonId);
+                                    isPlayingAd = false;
+                                    return;
+                                }
+                                
                                 const audioUrl = speakerBtn.getAttribute('data-audio-url');
 
                                 if (audioUrl) {
                                     playAudioFromDataUrl(audioUrl, speakerBtn, () => {
                                         console.log('[AD] AD audio ended');
-                                        // Always resume after first AD, then respect pause-during-ad setting
-                                        if (adIndex === 0 || pauseAdButton) {
+                                        // Resume if we paused (first AD not at 0:00, or pause-during-ad is ON)
+                                        if (shouldPause) {
                                             console.log('[AD] Resuming video');
                                             video.play();
                                         }
@@ -2250,16 +2901,18 @@
                                         if (ttsResponse && ttsResponse.success) {
                                             playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn, () => {
                                                 console.log('[AD] AD audio ended');
-                                                // Always resume after first AD, then respect pause-during-ad setting
-                                                if (adIndex === 0 || pauseAdButton) {
+                                                // Resume if we paused
+                                                if (shouldPause) {
                                                     console.log('[AD] Resuming video');
                                                     video.play();
                                                 }
                                             });
                                         } else {
                                             console.error('OpenAI TTS error:', ttsResponse?.error);
-                                            // Resume video on error only if it was paused
-                                            if (pauseAdButton) {
+                                            // Reset semaphore on error
+                                            isPlayingAd = false;
+                                            // Resume video on error if it was paused
+                                            if (shouldPause) {
                                                 video.play();
                                             }
                                         }
@@ -2310,6 +2963,17 @@
                         } else {
                             timeWindowValue.textContent = `${value}s`;
                             timeWindowSlider.setAttribute('aria-label', `Time Window ${value}s`);
+                        }
+                        // Clear preloaded audio cache when time window changes
+                        clearAudioCache();
+                        // Save settings when time window changes
+                        const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                        if (activeTab) {
+                            saveAllSettings(activeTab);
+                            // Preload all audio with new settings after a brief delay
+                            setTimeout(() => {
+                                preloadAllVisibleAudio();
+                            }, 50);
                         }
                     });
                 }
@@ -2544,19 +3208,9 @@ Please analyze the video frames provided and answer their question about what's 
                                             const user = window.FirebaseAPI?.getCurrentUser();
                                             if (user && window.DatabaseIntegration) {
                                                 const videoUrl = window.location.href;
-                                                // Capture all current settings as snapshot
+                                                // Only save word length for answers - presentation customization syncs automatically
                                                 const customizations = {
-                                                    // AD settings
-                                                    adVolume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 50),
-                                                    adSpeed: parseInt(sidebar.querySelector('#ad-speed-slider')?.value || 50),
-                                                    adGender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
-                                                    adVoice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'natural',
-                                                    adLength: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
-                                                    // VQA settings
-                                                    vqaVolume: parseInt(sidebar.querySelector('#vqa-volume-slider')?.value || 50),
-                                                    vqaSpeed: parseInt(sidebar.querySelector('#vqa-speed-slider')?.value || 50),
-                                                    vqaGender: sidebar.querySelector('#vqa-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
-                                                    vqaLength: parseInt(sidebar.querySelector('#time-window-slider')?.value || 25)
+                                                    vqaLength: parseInt(sidebar.querySelector('#vqa-length-slider')?.value || 25)
                                                 };
                                                 const messages = [
                                                     { role: 'user', content: question, timestamp: Date.now() },

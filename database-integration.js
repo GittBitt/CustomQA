@@ -19,41 +19,73 @@ window.DatabaseIntegration = {
   async saveADSettings(customizations) {
     const user = window.FirebaseAPI?.getCurrentUser();
     if (!user) {
-      console.log('User not logged in, not saving settings');
-      return false;
+      console.log('[CustomQA] User not logged in, not saving settings');
+      return { success: false };
     }
     
-    // Convert customizations to save format
+    // Convert customizations to save format - use the new field naming for user document
     const settings = {
-      volume: customizations.volume || 50,
-      speed: customizations.speed || 50,
-      length: customizations.length || 25,
-      frequency: customizations.frequency || 'sometimes',
-      emphasis: customizations.emphasis || 'balanced',
-      colorPreference: customizations.colorPreference || 'on',
-      narrationStyle: customizations.narrationStyle || 'objective',
-      gender: customizations.gender || 'female',
-      voice: customizations.voice || 'human',
-      pauseDuringAd: customizations.pauseDuringAd !== false
+      adVolume: customizations.volume || 50,
+      adSpeed: customizations.speed || 50,
+      adLength: customizations.length || 25,
+      adFrequency: customizations.frequency || 'sometimes',
+      adEmphasis: customizations.emphasis || 'balanced',
+      adColorPreference: customizations.colorPreference || 'on',
+      adNarrationStyle: customizations.narrationStyle || 'objective',
+      adGender: customizations.gender || 'female',
+      adVoice: customizations.voice || 'human',
+      adPauseDuringAd: customizations.pauseDuringAd !== false
     };
     
-    const result = await window.FirebaseAPI.saveSettings('audioDescription', settings);
-    return result.success;
+    try {
+      const result = await window.FirebaseAPI.saveSettings(user.uid, settings);
+      console.log('[CustomQA] saveSettings returned:', result);
+      // Handle both boolean and object returns
+      const success = result === true || result?.success === true;
+      if (!success) {
+        console.error('[CustomQA] Failed to save AD settings to Firestore:', result);
+        return { success: false };
+      } else {
+        console.log('[CustomQA] ✓ AD settings saved to Firestore:', settings);
+        return { success: true };
+      }
+    } catch (error) {
+      console.error('[CustomQA] Error saving AD settings:', error);
+      return { success: false, error: error.message };
+    }
   },
 
   async saveVQASettings(customizations) {
     const user = window.FirebaseAPI?.getCurrentUser();
-    if (!user) return false;
+    if (!user) {
+      console.log('[CustomQA] User not logged in, not saving VQA settings');
+      return { success: false };
+    }
     
     const settings = {
-      volume: customizations.volume || 50,
-      speed: customizations.speed || 50,
-      length: customizations.length || 25,
-      gender: customizations.gender || 'female'
+      vqaVolume: customizations.volume || 50,
+      vqaSpeed: customizations.speed || 50,
+      vqaLength: customizations.length || 25,
+      vqaGender: customizations.gender || 'female',
+      vqaVoice: customizations.voice || 'human'
     };
     
-    const result = await window.FirebaseAPI.saveSettings('vqa', settings);
-    return result.success;
+    try {
+      const result = await window.FirebaseAPI.saveSettings(user.uid, settings);
+      console.log('[CustomQA] VQA saveSettings returned:', result);
+      // Handle both boolean and object returns
+      const success = result === true || result?.success === true;
+      if (!success) {
+        console.error('[CustomQA] Failed to save VQA settings to Firestore:', result);
+        return { success: false };
+      } else {
+        console.log('[CustomQA] ✓ VQA settings saved to Firestore:', settings);
+        return { success: true };
+      }
+    } catch (error) {
+      console.error('[CustomQA] Error saving VQA settings:', error);
+      return { success: false, error: error.message };
+    }
   },
 
   async saveGeneratedAD(videoUrl, videoLength, customizations, generatedAds) {
