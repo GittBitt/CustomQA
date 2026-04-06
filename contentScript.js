@@ -97,7 +97,7 @@
                         }
                         // If this was the first AD and video was paused, resume it
                         if (window.shouldResumeAfterFirstAD && buttonElement?.id === 'ad-speaker-btn-loaded-0') {
-                            console.log('[CustomQA] ▶ Resuming video after first AD finished');
+                            console.log('[CustomQA] Resuming video after first AD finished');
                             window.shouldResumeAfterFirstAD = false;
                             if (video) {
                                 video.play();
@@ -925,6 +925,82 @@
                         const user = currentUser_FBAuth;
                         if (!user) return 'guest';
                         return await window.FirebaseAPI.getUserRole(user.uid);
+                    },
+
+                    async getMostRecentVideoSettings(currentVideoUrl) {
+                        const user = currentUser_FBAuth;
+                        if (!user || !idToken_FBAuth) return null;
+
+                        try {
+                            const currentVideoId = currentVideoUrl.split('v=')[1]?.split('&')[0] || '';
+                            console.log('[CustomQA] Looking for most recent video settings (excluding:', currentVideoId, ')');
+
+                            const videosPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${user.uid}/videos`;
+                            const response = await fetch(
+                                `https://firestore.googleapis.com/v1/${videosPath}?pageSize=100&key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'GET',
+                                    headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                }
+                            );
+
+                            if (!response.ok) {
+                                console.warn('[CustomQA] Failed to fetch videos list');
+                                return null;
+                            }
+
+                            const data = await response.json();
+                            const documents = data.documents || [];
+
+                            let mostRecent = null;
+                            let mostRecentTimestamp = 0;
+
+                            for (const doc of documents) {
+                                const docId = doc.name.split('/').pop();
+                                if (docId === currentVideoId) continue;
+
+                                const fields = doc.fields || {};
+                                const createdAt = fields.createdAt?.timestampValue;
+                                const updatedAt = fields.updatedAt?.timestampValue;
+                                const timestamp = updatedAt || createdAt;
+
+                                if (timestamp) {
+                                    const timestampMs = new Date(timestamp).getTime();
+                                    if (timestampMs > mostRecentTimestamp) {
+                                        mostRecentTimestamp = timestampMs;
+                                        const videoTitle = fields.videoTitle?.stringValue || 'Previous Video';
+                                        
+                                        const settings = {
+                                            adVolume: fields.adVolume?.integerValue || 50,
+                                            adSpeed: fields.adSpeed?.integerValue || 50,
+                                            adGender: fields.adGender?.stringValue || 'female',
+                                            adVoice: fields.adVoice?.stringValue || 'human',
+                                            adLength: fields.adLength?.integerValue || 25,
+                                            adFrequency: fields.adFrequency?.stringValue || 'sometimes',
+                                            adEmphasis: fields.adEmphasis?.stringValue || 'balanced',
+                                            adColorPreference: fields.adColorPreference?.stringValue || 'on',
+                                            adNarration: fields.adNarration?.stringValue || 'objective',
+                                            adPauseDuringAd: fields.adPauseDuringAd?.booleanValue !== false,
+                                            adEnabled: fields.adEnabled?.booleanValue !== false
+                                        };
+
+                                        mostRecent = { settings, videoTitle };
+                                    }
+                                }
+                            }
+
+                            if (mostRecent) {
+                                console.log('[CustomQA] Found most recent video settings:', mostRecent.videoTitle);
+                                return mostRecent;
+                            }
+
+                            console.log('[CustomQA] No previous video settings found');
+                            return null;
+
+                        } catch (error) {
+                            console.error('[CustomQA] Error getting most recent video settings:', error);
+                            return null;
+                        }
                     }
                 };
 
@@ -952,10 +1028,10 @@
                                 console.warn('[CustomQA] ⚠ User settings not found or empty');
                             }
                         } catch (e) {
-                            console.error('[CustomQA] ✗ Error loading user settings:', e?.message);
+                            console.error('[CustomQA] Error loading user settings:', e?.message);
                         }
                     } else {
-                        console.log('[CustomQA] ℹ No user logged in - user must login to see generated content');
+                        console.log('[CustomQA] No user logged in - user must login to see generated content');
                     }
                 })();
 
@@ -1464,7 +1540,7 @@
                                         if (onButton?.classList.contains('active')) {
                                             const firstSpeaker = sidebar.querySelector('#ad-speaker-btn-loaded-0');
                                             if (firstSpeaker) {
-                                                console.log('[CustomQA] ▶ Auto-playing first AD...');
+                                                console.log('[CustomQA] Auto-playing first AD...');
                                                 // Check if Pause During AD is ON
                                                 const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
                                                 if (pauseAdButton) {
@@ -1479,13 +1555,13 @@
                                     }
                                 }, 300);
                             } else {
-                                console.warn('[CustomQA] ✗ AD container NOT found - bubbles cannot display');
+                                console.warn('[CustomQA] AD container not found - cannot display preloaded ads');
                             }
                         } else {
-                            console.log('[CustomQA] ℹ No previous ADs found for this video');
+                            console.log('[CustomQA] No previous ADs found for this video');
                         }
                     } catch (adError) {
-                        console.error('[CustomQA] ✗ Error loading ADs:', adError);
+                        console.error('[CustomQA] Error loading ADs:', adError);
                     }
                     
                     // Load previous VQA for this video
@@ -1680,13 +1756,13 @@
                                     });
                                 }, 100);
                             } else {
-                                console.warn('[CustomQA] ✗ VQA container NOT found - bubbles cannot display');
+                                console.warn('[CustomQA] VQA container not found - cannot display previous questions');
                             }
                         } else {
-                            console.log('[CustomQA] ℹ No previous VQAs found for this video');
+                            console.log('[CustomQA] No previous VQAs found for this video');
                         }
                     } catch (vqaError) {
-                        console.error('[CustomQA] ✗ Error loading VQAs:', vqaError);
+                        console.error('[CustomQA] Error loading VQAs:', vqaError);
                     }
                     
                     console.log('[CustomQA] ========== VIDEO LOAD COMPLETE ==========');
@@ -1783,12 +1859,12 @@
                         if (isADTab) {
                             const result = await window.DatabaseIntegration?.saveADSettings(settings);
                             if (!result?.success) {
-                                console.error('[CustomQA] ✗ Failed to save AD settings:', result);
+                                console.error('[CustomQA] Failed to save AD settings:', result);
                             }
                         } else {
                             const result = await window.DatabaseIntegration?.saveVQASettings(settings);
                             if (!result?.success) {
-                                console.error('[CustomQA] ✗ Failed to save VQA settings:', result);
+                                console.error('[CustomQA] Failed to save VQA settings:', result);
                             }
                         }
                     } catch (error) {
@@ -1798,7 +1874,7 @@
 
                 // Helper function to completely clear audio cache and remove attributes
                 const clearAudioCache = () => {
-                    console.log('[CustomQA] 🔄 Clearing audio cache from all sources...');
+                    console.log('[CustomQA] Clearing audio cache');
                     preloadedAudioMap.clear();
                     // Also remove data-audio-url attributes from all buttons
                     const allButtons = sidebar.querySelectorAll('button[data-audio-url]');
@@ -1985,7 +2061,7 @@
                     lengthSlider.addEventListener('input', (e) => {
                         syncLengthSliders(e.target);
                         // Clear preloaded audio cache when length changes
-                        console.log('[CustomQA] 🔄 Clearing audio cache for length change...');
+                        console.log('[CustomQA] Clearing audio cache for length change');
                         preloadedAudioMap.clear();
                         // Save settings when length changes
                         const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
@@ -2002,7 +2078,7 @@
                     vqaLengthSlider.addEventListener('input', (e) => {
                         syncLengthSliders(e.target);
                         // Clear preloaded audio cache when length changes
-                        console.log('[CustomQA] 🔄 Clearing audio cache for length change...');
+                        console.log('[CustomQA] Clearing audio cache for length change');
                         preloadedAudioMap.clear();
                         // Save settings when length changes
                         const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
@@ -2037,7 +2113,7 @@
                         syncSpeedSliders(e.target);
                         
                         // Clear preloaded audio cache and regenerate with new speed
-                        console.log('[CustomQA] 🔄 Clearing audio cache for speed change...');
+                        console.log('[CustomQA] Clearing audio cache for speed change');
                         preloadedAudioMap.clear();
                         
                         // Save all settings when speed changes
@@ -2056,7 +2132,7 @@
                         syncSpeedSliders(e.target);
                         
                         // Clear preloaded audio cache and regenerate with new speed
-                        console.log('[CustomQA] 🔄 Clearing audio cache for speed change...');
+                        console.log('[CustomQA] Clearing audio cache for speed change');
                         preloadedAudioMap.clear();
                         
                         // Save all settings when speed changes
@@ -2114,7 +2190,7 @@
                             const otherTab = sidebar.querySelector('.tab-content[style*="display: none"]');
                             syncPresentationSettings(activeTab, otherTab);
                             // When gender changes, immediately clear cache and preload with new gender
-                            console.log('[CustomQA] 🔄 Gender changed - clearing preloaded audio cache...');
+                            console.log('[CustomQA] Gender changed - clearing preloaded audio');
                             clearAudioCache(); // Clear cache so audio regenerates with new gender
                             preloadAllVisibleAudio();
                             // Save all settings when gender changes
@@ -2596,6 +2672,126 @@
                             cancelAdGeneration = false;
                             generateAdButton.textContent = 'REGENERATE AD';
                             generateAdButton.disabled = false;
+                        }
+                    });
+                }
+
+                const restoreSettingsButton = sidebar.querySelector('#restore-settings-button');
+                if (restoreSettingsButton) {
+                    restoreSettingsButton.addEventListener('click', async () => {
+                        try {
+                            const user = window.FirebaseAPI?.getCurrentUser();
+                            if (!user || !window.DatabaseIntegration) {
+                                console.log('[CustomQA] Restore Settings: Not logged in or database not available');
+                                return;
+                            }
+
+                            restoreSettingsButton.disabled = true;
+                            restoreSettingsButton.textContent = 'Searching...';
+
+                            const result = await window.DatabaseIntegration.getMostRecentVideoSettings(window.location.href);
+                            
+                            if (!result || !result.settings) {
+                                console.log('[CustomQA] Restore Settings: No previous video settings found');
+                                restoreSettingsButton.textContent = 'RESTORE SETTINGS';
+                                restoreSettingsButton.disabled = false;
+                                return;
+                            }
+
+                            const settings = result.settings;
+                            const videoTitle = result.videoTitle || 'Previous Video';
+                            
+                            console.log('[CustomQA] Restoring settings from:', videoTitle);
+
+                            // Restore presentation customization
+                            const adSliders = {
+                                volume: sidebar.querySelector('#ad-volume-slider'),
+                                speed: sidebar.querySelector('#ad-speed-slider'),
+                                length: sidebar.querySelector('#length-slider')
+                            };
+
+                            if (settings.adVolume && adSliders.volume) adSliders.volume.value = settings.adVolume;
+                            if (settings.adSpeed && adSliders.speed) adSliders.speed.value = settings.adSpeed;
+                            if (settings.adLength && adSliders.length) adSliders.length.value = settings.adLength;
+
+                            const setButtonByDataAttr = (selector, attrName, attrValue) => {
+                                const buttons = sidebar.querySelectorAll(selector);
+                                buttons.forEach(btn => {
+                                    if (btn.dataset[attrName] === attrValue) {
+                                        btn.classList.add('active');
+                                        btn.setAttribute('aria-pressed', 'true');
+                                    } else {
+                                        btn.classList.remove('active');
+                                        btn.setAttribute('aria-pressed', 'false');
+                                    }
+                                });
+                            };
+
+                            // Restore Gender and Voice
+                            if (settings.adGender) {
+                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-gender]', 'gender', settings.adGender);
+                            }
+                            if (settings.adVoice) {
+                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-voice]', 'voice', settings.adVoice);
+                            }
+
+                            // Restore content customization
+                            if (settings.adFrequency) {
+                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-frequency]', 'frequency', settings.adFrequency);
+                            }
+                            if (settings.adEmphasis) {
+                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-emphasis]', 'emphasis', settings.adEmphasis);
+                            }
+                            if (settings.adColorPreference) {
+                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-color]', 'color', settings.adColorPreference);
+                            }
+                            if (settings.adNarration) {
+                                setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-narration]', 'narration', settings.adNarration);
+                            }
+
+                            // Restore customization setups
+                            if (settings.adPauseDuringAd !== undefined) {
+                                const pauseAction = settings.adPauseDuringAd ? 'pause-on' : 'pause-off';
+                                setButtonByDataAttr('#pause-ad-group .pill-button', 'action', pauseAction);
+                            }
+
+                            // Restore Audio Description ON/OFF status if available
+                            if (settings.adEnabled !== undefined) {
+                                const adToggleButtons = sidebar.querySelectorAll('#audio-descriptions-tab > .section:nth-child(3) .button-group .pill-button');
+                                if (adToggleButtons.length >= 2) {
+                                    const onBtn = adToggleButtons[0];
+                                    const offBtn = adToggleButtons[1];
+                                    if (settings.adEnabled) {
+                                        onBtn.classList.add('active');
+                                        onBtn.setAttribute('aria-pressed', 'true');
+                                        offBtn.classList.remove('active');
+                                        offBtn.setAttribute('aria-pressed', 'false');
+                                    } else {
+                                        offBtn.classList.add('active');
+                                        offBtn.setAttribute('aria-pressed', 'true');
+                                        onBtn.classList.remove('active');
+                                        onBtn.setAttribute('aria-pressed', 'false');
+                                    }
+                                }
+                            }
+
+                            console.log('[CustomQA] Settings restored successfully');
+                            restoreSettingsButton.textContent = 'Settings Restored!';
+                            
+                            setTimeout(() => {
+                                restoreSettingsButton.textContent = 'RESTORE SETTINGS';
+                                restoreSettingsButton.disabled = false;
+                            }, 2000);
+
+                            clearAudioCache();
+                            setTimeout(() => {
+                                preloadAllVisibleAudio();
+                            }, 50);
+
+                        } catch (error) {
+                            console.error('[CustomQA] Error restoring settings:', error);
+                            restoreSettingsButton.textContent = 'RESTORE SETTINGS';
+                            restoreSettingsButton.disabled = false;
                         }
                     });
                 }
@@ -3140,110 +3336,159 @@
                             chatMessages.scrollTop = chatMessages.scrollHeight;
 
                             const callGemini = async () => {
-                                try {
-                                    const youtubeUrl = window.location.href;
-                                    const currentTime = video.currentTime;
-                                    const timeWindow = parseInt(timeWindowSlider.value, 10);
+                                const formatTime = (seconds) => {
+                                    const mins = Math.floor(seconds / 60);
+                                    const secs = Math.floor(seconds % 60);
+                                    return `${mins}:${secs.toString().padStart(2, '0')}`;
+                                };
 
-                                    const frames = [];
-                                    if (timeWindow > 0) {
-                                        aiTextSpan.textContent = `Capturing frames for ±${timeWindow}s...`;
-                                        const start = Math.max(0, currentTime - timeWindow);
-                                        const end = Math.min(video.duration, currentTime + timeWindow);
-                                        
-                                        // Capture one frame per second
-                                        for (let i = start; i <= end; i++) {
-                                            try {
-                                                console.log(`[VQA] Capturing frame at ${i}s`);
-                                                const frameData = await captureVideoFrame(i);
-                                                frames.push({
-                                                    timestamp: i,
-                                                    frameData: frameData
-                                                });
-                                            } catch (error) {
-                                                console.error(`[VQA] Failed to capture frame at ${i}s:`, error);
+                                const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
+                                const wordCount = vqaLengthSlider ? vqaLengthSlider.value : 20;
+
+                                const sendGeminiRequest = async (windowSize) => {
+                                    try {
+                                        const youtubeUrl = window.location.href;
+                                        const currentTime = video.currentTime;
+
+                                        const frames = [];
+                                        if (windowSize > 0) {
+                                            const start = Math.max(0, currentTime - windowSize);
+                                            const end = Math.min(video.duration, currentTime + windowSize);
+                                            
+                                            for (let i = start; i <= end; i++) {
+                                                try {
+                                                    console.log(`[VQA] Capturing frame at ${i}s`);
+                                                    const frameData = await captureVideoFrame(i);
+                                                    frames.push({
+                                                        timestamp: i,
+                                                        frameData: frameData
+                                                    });
+                                                } catch (error) {
+                                                    console.error(`[VQA] Failed to capture frame at ${i}s:`, error);
+                                                }
                                             }
+                                        } else {
+                                            const frameData = await captureVideoFrame(currentTime);
+                                            frames.push({
+                                                timestamp: currentTime,
+                                                frameData: frameData
+                                            });
                                         }
-                                        aiTextSpan.textContent = 'Thinking...';
-                                    } else {
-                                        // Capture only the current frame if timeWindow is 0
-                                        const frameData = await captureVideoFrame(currentTime);
-                                        frames.push({
-                                            timestamp: currentTime,
-                                            frameData: frameData
-                                        });
-                                    }
 
-                                    if (frames.length === 0) {
-                                        throw new Error("Could not capture any video frames.");
-                                    }
+                                        if (frames.length === 0) {
+                                            return { success: false, error: 'Could not capture frames' };
+                                        }
 
-                                    const formatTime = (seconds) => {
-                                        const mins = Math.floor(seconds / 60);
-                                        const secs = Math.floor(seconds % 60);
-                                        return `${mins}:${secs.toString().padStart(2, '0')}`;
-                                    };
-
-                                    const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
-                                    const wordCount = vqaLengthSlider ? vqaLengthSlider.value : 20;
-
-                                    const prompt = `User is watching a YouTube video at timestamp ${formatTime(currentTime)}.
+                                        const prompt = `User is watching a YouTube video at timestamp ${formatTime(currentTime)}.
 User's question: "${question}"
 
 Please analyze the video frames provided and answer their question about what's happening in the video. The frames are captured around the given timestamp. Please answer in approximately ${wordCount} words.`;
 
-                                    console.log('Sending CALL_GEMINI message with frames to background script');
-                                    chrome.runtime.sendMessage({
-                                        type: 'CALL_GEMINI_VQA_MULTIFRAME',
-                                        prompt: prompt,
-                                        frames: frames
-                                    }, async (response) => {
-                                        console.log('Received response from background:', response);
-                                        if (response && response.success) {
-                                            aiTextSpan.textContent = response.text;
-                                            speakerBtn.setAttribute('data-text', response.text);
-                                            speakerBtn.style.opacity = '1';
-                                            
-                                            // Save VQA to Firestore if user is logged in
-                                            const user = window.FirebaseAPI?.getCurrentUser();
-                                            if (user && window.DatabaseIntegration) {
-                                                const videoUrl = window.location.href;
-                                                // Only save word length for answers - presentation customization syncs automatically
-                                                const customizations = {
-                                                    vqaLength: parseInt(sidebar.querySelector('#vqa-length-slider')?.value || 25)
-                                                };
-                                                const messages = [
-                                                    { role: 'user', content: question, timestamp: Date.now() },
-                                                    { role: 'assistant', content: response.text, timestamp: Date.now() }
-                                                ];
-                                                
-                                                await window.DatabaseIntegration.saveGeneratedVQA(videoUrl, video.duration, customizations, messages);
+                                        return new Promise((resolve) => {
+                                            chrome.runtime.sendMessage({
+                                                type: 'CALL_GEMINI_VQA_MULTIFRAME',
+                                                prompt: prompt,
+                                                frames: frames
+                                            }, (response) => {
+                                                resolve(response);
+                                            });
+                                        });
+                                    } catch (error) {
+                                        console.error('Error in sendGeminiRequest:', error);
+                                        return { success: false, error: error.message };
+                                    }
+                                };
+
+                                const isValidResponse = (response) => {
+                                    if (!response || !response.success || !response.text) {
+                                        return false;
+                                    }
+                                    const text = response.text.toLowerCase();
+                                    const failureIndicators = [
+                                        "i don't have enough information",
+                                        "i can't see",
+                                        "i cannot see",
+                                        "cannot determine",
+                                        "unable to determine",
+                                        "not visible",
+                                        "no frames",
+                                        "cannot answer",
+                                        "can't answer"
+                                    ];
+                                    return !failureIndicators.some(indicator => text.includes(indicator));
+                                };
+
+                                try {
+                                    const initialWindow = parseInt(timeWindowSlider.value, 10);
+                                    const fallbackWindows = [3, 6, 9, video.duration];
+                                    
+                                    aiTextSpan.textContent = `Capturing frames for ±${initialWindow}s...`;
+                                    let response = await sendGeminiRequest(initialWindow);
+                                    aiTextSpan.textContent = 'Processing...';
+
+                                    if (isValidResponse(response)) {
+                                        console.log('[VQA] Got valid response with initial window');
+                                    } else {
+                                        console.log('[VQA] Initial response invalid, attempting fallback strategy');
+                                        for (const windowSize of fallbackWindows) {
+                                            if (windowSize === video.duration) {
+                                                aiTextSpan.textContent = 'Expanding to full video...';
+                                            } else {
+                                                aiTextSpan.textContent = `Expanding to ±${windowSize}s...`;
                                             }
                                             
-                                            const genderBtnResp = sidebar.querySelector('.pill-button[data-gender].active');
-                                            const genderResp = genderBtnResp ? genderBtnResp.dataset.gender : 'female';
-                                            preloadAndStoreAudio(response.text, speakerBtn, genderResp);
-
-                                            chrome.runtime.sendMessage({
-                                                type: 'CALL_OPENAI_TTS',
-                                                text: response.text,
-                                                gender: genderResp
-                                            }, (ttsResponse) => {
-                                                if (ttsResponse && ttsResponse.success) {
-                                                    playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn);
-                                                } else {
-                                                    console.error('OpenAI TTS error:', ttsResponse?.error);
-                                                }
-                                            });
-                                        } else {
-                                            aiTextSpan.textContent = `Error: ${response?.error || 'Unknown error occurred'}`;
-                                            console.error('Gemini API error:', response?.error);
+                                            response = await sendGeminiRequest(windowSize);
+                                            if (isValidResponse(response)) {
+                                                console.log(`[VQA] Got valid response with ${windowSize}s window`);
+                                                break;
+                                            }
                                         }
-                                    });
-                                                                } catch (error) {
-                                                                    console.error("Error calling Gemini API:", error);
-                                                                    aiTextSpan.textContent = `Error: ${error.message}`;
-                                                                }                            };
+                                    }
+
+                                    aiTextSpan.textContent = 'Thinking...';
+
+                                    if (response && response.success) {
+                                        aiTextSpan.textContent = response.text;
+                                        speakerBtn.setAttribute('data-text', response.text);
+                                        speakerBtn.style.opacity = '1';
+                                        
+                                        const user = window.FirebaseAPI?.getCurrentUser();
+                                        if (user && window.DatabaseIntegration) {
+                                            const videoUrl = window.location.href;
+                                            const customizations = {
+                                                vqaLength: parseInt(sidebar.querySelector('#vqa-length-slider')?.value || 25)
+                                            };
+                                            const messages = [
+                                                { role: 'user', content: question, timestamp: Date.now() },
+                                                { role: 'assistant', content: response.text, timestamp: Date.now() }
+                                            ];
+                                            
+                                            await window.DatabaseIntegration.saveGeneratedVQA(videoUrl, video.duration, customizations, messages);
+                                        }
+                                        
+                                        const genderBtnResp = sidebar.querySelector('.pill-button[data-gender].active');
+                                        const genderResp = genderBtnResp ? genderBtnResp.dataset.gender : 'female';
+                                        preloadAndStoreAudio(response.text, speakerBtn, genderResp);
+
+                                        chrome.runtime.sendMessage({
+                                            type: 'CALL_OPENAI_TTS',
+                                            text: response.text,
+                                            gender: genderResp
+                                        }, (ttsResponse) => {
+                                            if (ttsResponse && ttsResponse.success) {
+                                                playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn);
+                                            } else {
+                                                console.error('OpenAI TTS error:', ttsResponse?.error);
+                                            }
+                                        });
+                                    } else {
+                                        aiTextSpan.textContent = `Error: ${response?.error || 'Could not generate response'}`;
+                                        console.error('Gemini API error:', response?.error);
+                                    }
+                                } catch (error) {
+                                    console.error('Error calling Gemini API:', error);
+                                    aiTextSpan.textContent = `Error: ${error.message}`;
+                                }                            };
 
                             callGemini();
                         }
