@@ -333,7 +333,7 @@
                                             adEmphasis: { stringValue: 'balanced' },
                                             adColorPreference: { stringValue: 'on' },
                                             adNarrationStyle: { stringValue: 'objective' },
-                                            adPauseDuringAd: { booleanValue: false },
+                                            adPauseDuringAd: { booleanValue: true },
                                             vqaVolume: { integerValue: 100 },
                                             vqaSpeed: { integerValue: 50 },
                                             vqaGender: { stringValue: 'female' },
@@ -434,7 +434,7 @@
                                     adEmphasis: data.fields.adEmphasis?.stringValue || 'balanced',
                                     adColorPreference: data.fields.adColorPreference?.stringValue || 'on',
                                     adNarrationStyle: data.fields.adNarrationStyle?.stringValue || 'objective',
-                                    adPauseDuringAd: data.fields.adPauseDuringAd?.booleanValue ?? false,
+                                    adPauseDuringAd: data.fields.adPauseDuringAd?.booleanValue ?? true,
                                     // VQA settings
                                     vqaVolume: parseInt(data.fields.vqaVolume?.integerValue || 100),
                                     vqaSpeed: parseInt(data.fields.vqaSpeed?.integerValue || 50),
@@ -483,7 +483,7 @@
                                             adEmphasis: { stringValue: settings.adEmphasis || 'balanced' },
                                             adColorPreference: { stringValue: settings.adColorPreference || 'on' },
                                             adNarrationStyle: { stringValue: settings.adNarrationStyle || 'objective' },
-                                            adPauseDuringAd: { booleanValue: settings.adPauseDuringAd ?? false },
+                                            adPauseDuringAd: { booleanValue: settings.adPauseDuringAd ?? true },
                                             // VQA settings
                                             vqaVolume: { integerValue: parseInt(settings.vqaVolume || 100) },
                                             vqaSpeed: { integerValue: parseInt(settings.vqaSpeed || 50) },
@@ -2731,7 +2731,7 @@
                         adColorPreference: 'on',
                         adNarrationStyle: 'objective',
                         // AD Customization Setups
-                        adPauseDuringAd: false,
+                        adPauseDuringAd: true,
                         // VQA Presentation Customization
                         vqaVolume: 100,
                         vqaSpeed: 50,
@@ -2845,9 +2845,9 @@
                                 length: sidebar.querySelector('#vqa-length-slider')
                             };
 
-                            if (settings.vqaVolume && vqaSliders.volume) vqaSliders.volume.value = settings.vqaVolume;
-                            if (settings.vqaSpeed && vqaSliders.speed) vqaSliders.speed.value = settings.vqaSpeed;
-                            if (settings.vqaLength && vqaSliders.length) {
+                            if (settings.vqaVolume !== undefined && vqaSliders.volume) vqaSliders.volume.value = settings.vqaVolume;
+                            if (settings.vqaSpeed !== undefined && vqaSliders.speed) vqaSliders.speed.value = settings.vqaSpeed;
+                            if (settings.vqaLength !== undefined && vqaSliders.length) {
                                 vqaSliders.length.value = settings.vqaLength;
                                 const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
                                 if (vqaLengthValue) vqaLengthValue.textContent = settings.vqaLength;
@@ -3438,6 +3438,10 @@
                                     return `${mins}:${secs.toString().padStart(2, '0')}`;
                                 };
 
+                                // Capture the timestamp at which the question was asked
+                                const askedAtTime = video.currentTime;
+                                const askedAtTimestamp = formatTime(askedAtTime);
+
                                 const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
                                 const wordCount = vqaLengthSlider ? vqaLengthSlider.value : 20;
 
@@ -3526,8 +3530,8 @@ Please analyze the video frames provided and answer their question about what's 
                                 };
 
                                 try {
-                                    const initialWindow = parseInt(timeWindowSlider.value, 10);
-                                    const fallbackWindows = [3, 6, 9, video.duration];
+                                    const initialWindow = 3;
+                                    const fallbackWindows = [9, 30, video.duration];
                                     
                                     aiTextSpan.textContent = `Capturing frames for ±${initialWindow}s...`;
                                     let response = await sendGeminiRequest(initialWindow);
@@ -3555,7 +3559,8 @@ Please analyze the video frames provided and answer their question about what's 
                                     aiTextSpan.textContent = 'Thinking...';
 
                                     if (response && response.success) {
-                                        aiTextSpan.textContent = response.text;
+                                        const responseWithTimestamp = `[${askedAtTimestamp}] ${response.text}`;
+                                        aiTextSpan.textContent = responseWithTimestamp;
                                         speakerBtn.setAttribute('data-text', response.text);
                                         speakerBtn.style.opacity = '1';
                                         
