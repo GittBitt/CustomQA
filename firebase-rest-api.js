@@ -8,6 +8,46 @@ try {
   let currentUser = null;
   let idToken = null;
 
+  // Helper function to persist auth state
+  const saveAuthState = async () => {
+    if (idToken && currentUser) {
+      try {
+        await new Promise((resolve, reject) => {
+          chrome.storage.local.set({ 
+            customqa_idToken: idToken,
+            customqa_currentUser: currentUser 
+          }, () => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+            } else {
+              resolve();
+            }
+          });
+        });
+        console.log('[FirebaseAPI] Auth state saved to storage');
+      } catch (e) {
+        console.warn('[FirebaseAPI] Failed to save auth state:', e);
+      }
+    }
+  };
+
+  // Helper function to restore auth state
+  const restoreAuthState = async () => {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['customqa_idToken', 'customqa_currentUser'], (items) => {
+        if (items.customqa_idToken && items.customqa_currentUser) {
+          idToken = items.customqa_idToken;
+          currentUser = items.customqa_currentUser;
+          console.log('[FirebaseAPI] Auth state restored from storage for user:', currentUser.email);
+        }
+        resolve();
+      });
+    });
+  };
+
+  // Restore auth state on initialization
+  restoreAuthState().catch(e => console.warn('[FirebaseAPI] Error restoring auth state:', e));
+
   window.FirebaseAPI = {
     async signupWithEmail(email, password, role) {
       try {
@@ -28,6 +68,7 @@ try {
 
         idToken = data.idToken;
         currentUser = { uid: data.localId, email };
+        await saveAuthState();
         await this.createUserDocument(data.localId, email, role);
         return { success: true, user: { email, role }, uid: data.localId };
       } catch (error) {
@@ -39,29 +80,44 @@ try {
       try {
         const response = await fetch(
           `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${window.firebaseConfig.apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, returnSecureToken: true })
-        }
-      );
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error?.message || 'Login failed');
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, returnSecureToken: true })
+          }
+        );
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error?.message || 'Login failed');
 
-      idToken = data.idToken;
-      currentUser = { uid: data.localId, email };
-      const userRole = await this.getUserRole(data.localId);
-      return { success: true, user: { email, role: userRole }, uid: data.localId };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  },
+        idToken = data.idToken;
+        currentUser = { uid: data.localId, email };
+        await saveAuthState();
+        const userRole = await this.getUserRole(data.localId);
+        return { success: true, user: { email, role: userRole }, uid: data.localId };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    },
 
-  async logout() {
-    currentUser = null;
-    idToken = null;
-    return { success: true };
-  },
+    async logout() {
+      currentUser = null;
+      idToken = null;
+      try {
+        await new Promise((resolve, reject) => {
+          chrome.storage.local.remove(['customqa_idToken', 'customqa_currentUser'], () => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+            } else {
+              resolve();
+            }
+          });
+        });
+        console.log('[FirebaseAPI] Auth state cleared from storage');
+      } catch (e) {
+        console.warn('[FirebaseAPI] Failed to clear auth state:', e);
+      }
+      return { success: true };
+    },
 
   getCurrentUser() {
     return currentUser;
@@ -79,7 +135,7 @@ try {
     };
 
     await fetch(
-      `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/users/${userId}?key=${window.firebaseConfig.apiKey}`,
+      `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}?key=${window.firebaseConfig.apiKey}`,
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
@@ -105,7 +161,7 @@ try {
       fields.updatedAt = { timestampValue: ts };
 
       await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/users/${userId}/settings/${type}?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/settings/${type}?key=${window.firebaseConfig.apiKey}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
@@ -118,7 +174,7 @@ try {
   async getUserRole(userId) {
     try {
       const response = await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/users/${userId}?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}?key=${window.firebaseConfig.apiKey}`,
         { headers: { 'Authorization': `Bearer ${idToken}` } }
       );
       const data = await response.json();
@@ -132,7 +188,7 @@ try {
     if (!currentUser || !idToken) return null;
     try {
       const response = await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/users/${currentUser.uid}/settings/${settingType}?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${currentUser.uid}/settings/${settingType}?key=${window.firebaseConfig.apiKey}`,
         { headers: { 'Authorization': `Bearer ${idToken}` } }
       );
       const data = await response.json();
@@ -153,7 +209,7 @@ try {
       fields.updatedAt = { timestampValue: new Date().toISOString() };
 
       const response = await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/users/${currentUser.uid}/settings/${settingType}?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${currentUser.uid}/settings/${settingType}?key=${window.firebaseConfig.apiKey}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
@@ -205,7 +261,7 @@ try {
       };
       
       await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/videos/${videoDocId}?key=${window.firebaseConfig.apiKey}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
@@ -226,7 +282,7 @@ try {
       adData.fields.createdAt = { timestampValue: timestamp };
 
       await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}/audioDescriptions/current?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/videos/${videoDocId}/audioDescriptions/current?key=${window.firebaseConfig.apiKey}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
@@ -242,17 +298,27 @@ try {
 
   // Load video AD data
   async loadVideoAD(videoUrl) {
-    if (!currentUser || !idToken) return null;
+    if (!currentUser || !idToken) {
+      console.warn('[FirebaseAPI.loadVideoAD] Cannot load: currentUser=', !!currentUser, 'idToken=', !!idToken);
+      return null;
+    }
     try {
       const videoDocId = this.createVideoDocId(currentUser.uid, videoUrl);
+      console.log('[FirebaseAPI.loadVideoAD] Loading from:', `videos/${videoDocId}/audioDescriptions/current`);
       const response = await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}/audioDescriptions/current?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/videos/${videoDocId}/audioDescriptions/current?key=${window.firebaseConfig.apiKey}`,
         { headers: { 'Authorization': `Bearer ${idToken}` } }
       );
-      if (!response.ok) return null;
+      console.log('[FirebaseAPI.loadVideoAD] Response status:', response.status);
+      if (!response.ok) {
+        console.warn('[FirebaseAPI.loadVideoAD] Response not ok:', response.status, response.statusText);
+        return null;
+      }
       const data = await response.json();
+      console.log('[FirebaseAPI.loadVideoAD] Loaded data:', !!data.fields);
       return data.fields ? this.fromFirestore(data.fields) : null;
     } catch (error) {
+      console.error('[FirebaseAPI.loadVideoAD] Error:', error);
       return null;
     }
   },
@@ -275,7 +341,7 @@ try {
       };
       
       await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/videos/${videoDocId}?key=${window.firebaseConfig.apiKey}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
@@ -297,7 +363,7 @@ try {
       vqaData.fields.createdAt = { timestampValue: timestamp };
 
       await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}/vqa/current?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/videos/${videoDocId}/vqa/current?key=${window.firebaseConfig.apiKey}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
@@ -313,17 +379,27 @@ try {
 
   // Load VQA data
   async loadVideoVQA(videoUrl) {
-    if (!currentUser || !idToken) return null;
+    if (!currentUser || !idToken) {
+      console.warn('[FirebaseAPI.loadVideoVQA] Cannot load: currentUser=', !!currentUser, 'idToken=', !!idToken);
+      return null;
+    }
     try {
       const videoDocId = this.createVideoDocId(currentUser.uid, videoUrl);
+      console.log('[FirebaseAPI.loadVideoVQA] Loading from:', `videos/${videoDocId}/vqa/current`);
       const response = await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/videos/${videoDocId}/vqa/current?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/videos/${videoDocId}/vqa/current?key=${window.firebaseConfig.apiKey}`,
         { headers: { 'Authorization': `Bearer ${idToken}` } }
       );
-      if (!response.ok) return null;
+      console.log('[FirebaseAPI.loadVideoVQA] Response status:', response.status);
+      if (!response.ok) {
+        console.warn('[FirebaseAPI.loadVideoVQA] Response not ok:', response.status, response.statusText);
+        return null;
+      }
       const data = await response.json();
+      console.log('[FirebaseAPI.loadVideoVQA] Loaded data:', !!data.fields);
       return data.fields ? this.fromFirestore(data.fields) : null;
     } catch (error) {
+      console.error('[FirebaseAPI.loadVideoVQA] Error:', error);
       return null;
     }
   },
@@ -332,7 +408,7 @@ try {
   async getUserRoleById(userId) {
     try {
       const response = await fetch(
-        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/(default)/documents/users/${userId}?key=${window.firebaseConfig.apiKey}`,
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}?key=${window.firebaseConfig.apiKey}`,
         { headers: { 'Authorization': `Bearer ${idToken}` } }
       );
       if (!response.ok) return 'guest';
@@ -354,6 +430,84 @@ try {
       fields[k] = this.toFirestore(v);
     }
     return { mapValue: { fields } };
+  },
+
+  // Check if a video has existing audio descriptions
+  async hasExistingAD(videoUrl) {
+    if (!currentUser || !idToken) return false;
+    try {
+      const videoDocId = this.createVideoDocId(currentUser.uid, videoUrl);
+      const response = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/videos/${videoDocId}/audioDescriptions/current?key=${window.firebaseConfig.apiKey}`,
+        { headers: { 'Authorization': `Bearer ${idToken}` } }
+      );
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  },
+
+  // Check if a video has existing VQAs
+  async hasExistingVQA(videoUrl) {
+    if (!currentUser || !idToken) return false;
+    try {
+      const videoDocId = this.createVideoDocId(currentUser.uid, videoUrl);
+      const response = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/videos/${videoDocId}/vqa/current?key=${window.firebaseConfig.apiKey}`,
+        { headers: { 'Authorization': `Bearer ${idToken}` } }
+      );
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  },
+
+  // Get the most recent AD for a video (returns null if none exists)
+  async getMostRecentAD(videoUrl) {
+    if (!currentUser || !idToken) return null;
+    try {
+      const videoDocId = this.createVideoDocId(currentUser.uid, videoUrl);
+      const response = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/videos/${videoDocId}/audioDescriptions/current?key=${window.firebaseConfig.apiKey}`,
+        { headers: { 'Authorization': `Bearer ${idToken}` } }
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      if (!data.fields) return null;
+      
+      return {
+        data: this.fromFirestore(data.fields),
+        createdAt: data.fields?.createdAt?.timestampValue,
+        documentId: data.name
+      };
+    } catch (error) {
+      console.error('Error loading most recent AD:', error);
+      return null;
+    }
+  },
+
+  // Get the most recent VQA for a video (returns null if none exists)
+  async getMostRecentVQA(videoUrl) {
+    if (!currentUser || !idToken) return null;
+    try {
+      const videoDocId = this.createVideoDocId(currentUser.uid, videoUrl);
+      const response = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/videos/${videoDocId}/vqa/current?key=${window.firebaseConfig.apiKey}`,
+        { headers: { 'Authorization': `Bearer ${idToken}` } }
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      if (!data.fields) return null;
+      
+      return {
+        data: this.fromFirestore(data.fields),
+        createdAt: data.fields?.createdAt?.timestampValue,
+        documentId: data.name
+      };
+    } catch (error) {
+      console.error('Error loading most recent VQA:', error);
+      return null;
+    }
   }
 };
 
