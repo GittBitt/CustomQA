@@ -78,7 +78,7 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    color: #606060;
+    color: #000;
     font-size: 20px;
     border: none;
     border-radius: 50%; /* Circle shape */
@@ -87,7 +87,8 @@
 }
 
 .settings-icon:hover {
-    color: #333; /* Darker gray on hover */
+    color: #333;
+    background-color: #e0e0e0;
 }
 
 .auth-avatar-icon {
@@ -99,12 +100,12 @@
     cursor: pointer;
     color: #000;
     font-size: 18px;
-    border: 1px solid #ccc;
-    border-radius: 50%;
-    background-color: #e0e0e0;
+    border-radius: 75%;
     transition: all 0.2s;
     padding: 0;
     margin: 0;
+    border: none;
+    outline: none;
 }
 
 .auth-avatar-icon:hover {
@@ -452,4 +453,13 @@ textarea {
     border-radius: 4px;
     font-size: 13px;
     text-align: center;
+}
+
+/* Hide time window slider by default (only admins can see it) */
+#time-window-slider-container {
+    display: none;
+}
+
+#time-window-slider-container.admin-visible {
+    display: block;
 }

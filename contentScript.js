@@ -335,6 +335,45 @@
                         return currentUser_FBAuth;
                     },
 
+                    setupRoleListener(userId, onRoleChange) {
+                        if (!idToken_FBAuth) {
+                            console.warn('[CustomQA] No auth token available for role listener');
+                            return null;
+                        }
+
+                        // Set up polling-based listener since REST API doesn't support real-time
+                        const checkInterval = setInterval(async () => {
+                            try {
+                                const userDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}`;
+                                const response = await fetch(
+                                    `https://firestore.googleapis.com/v1/${userDocPath}?key=${window.firebaseConfig.apiKey}`,
+                                    {
+                                        method: 'GET',
+                                        headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                    }
+                                );
+
+                                if (response.ok) {
+                                    const data = await response.json();
+                                    const fields = data.fields || {};
+                                    const newRole = fields.role?.stringValue || 'guest';
+
+                                    // Update cached user data if role changed
+                                    if (currentUser_FBAuth && currentUser_FBAuth.role !== newRole) {
+                                        currentUser_FBAuth.role = newRole;
+                                        console.log('[CustomQA] Role updated to:', newRole);
+                                        onRoleChange(newRole);
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('[CustomQA] Error checking role:', error);
+                            }
+                        }, 5000); // Check every 5 seconds
+
+                        // Return function to stop the listener
+                        return () => clearInterval(checkInterval);
+                    },
+
                     async loadSettings(userId) {
                         if (!idToken_FBAuth) return null;
                         try {
@@ -901,6 +940,26 @@
 
                 sidebar.innerHTML = html;
 
+                // Update time window slider visibility based on user role
+                const updateTimeWindowSliderVisibility = () => {
+                    const user = window.FirebaseAPI?.getCurrentUser();
+                    const timeWindowContainer = sidebar.querySelector('#time-window-slider-container');
+                    
+                    console.log('[CustomQA] Updating time window visibility - User:', user?.email, 'Role:', user?.role, 'Container found:', !!timeWindowContainer);
+                    
+                    if (timeWindowContainer) {
+                        if (user && user.role === 'admin') {
+                            timeWindowContainer.style.display = 'block';
+                            console.log('[CustomQA] Time window slider SHOWN for admin');
+                        } else {
+                            timeWindowContainer.style.display = 'none';
+                            console.log('[CustomQA] Time window slider HIDDEN for non-admin');
+                        }
+                    } else {
+                        console.warn('[CustomQA] Time window container not found in DOM');
+                    }
+                };
+
                 // Setup auth menu - attach to avatar button
                 const avatarBtn = sidebar.querySelector('#auth-avatar-btn');
                 let authMenuOpen = false;
@@ -927,6 +986,7 @@
                         const user = window.FirebaseAPI?.getCurrentUser();
                         authMenu.innerHTML = '';
                         updateAvatarIcon();
+                        updateTimeWindowSliderVisibility();
                         
                         if (user) {
                             // Logged in
@@ -1099,6 +1159,11 @@
                     renderAuthMenu();
                 }
 
+                // Ensure time window visibility is set immediately after sidebar loads
+                setTimeout(() => {
+                    updateTimeWindowSliderVisibility();
+                }, 100);
+
                 // Load user settings if logged in
                 const user = window.FirebaseAPI?.getCurrentUser();
                 let hasExistingAD = false;
@@ -1109,6 +1174,12 @@
                     if (settings) {
                         window.DatabaseIntegration.restoreSettingsToUI(sidebar, settings);
                     }
+
+                    // Set up real-time role listener
+                    window.FirebaseAPI.setupRoleListener(user.uid, (newRole) => {
+                        // Call the time window visibility update when role changes
+                        updateTimeWindowSliderVisibility();
+                    });
                     
                     // Helper function to format dates
                     const formatDateHelper = (isoString) => {
@@ -1839,16 +1910,16 @@
                         let interval;
                         switch (frequency) {
                             case 'rarely':
-                                interval = 120;
-                                break;
-                            case 'sometimes':
                                 interval = 60;
                                 break;
-                            case 'often':
+                            case 'sometimes':
                                 interval = 30;
                                 break;
-                            case 'very-often':
+                            case 'often':
                                 interval = 15;
+                                break;
+                            case 'very-often':
+                                interval = 8;
                                 break;
                             default:
                                 interval = 60;
