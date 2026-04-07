@@ -2425,6 +2425,74 @@
                     });
                 };
 
+                const formatTimestamp = (seconds) => {
+                    const safeSeconds = Math.max(0, Math.floor(seconds));
+                    const mins = Math.floor(safeSeconds / 60);
+                    const secs = safeSeconds % 60;
+                    return `${mins}:${secs.toString().padStart(2, '0')}`;
+                };
+
+                const getFrequencyIntervalSeconds = (frequency) => {
+                    switch (frequency) {
+                        case 'rarely':
+                            return 60;
+                        case 'sometimes':
+                            return 30;
+                        case 'often':
+                            return 15;
+                        case 'very-often':
+                            return 8;
+                        default:
+                            return 30;
+                    }
+                };
+
+                const buildAdSegments = (duration, intervalSeconds) => {
+                    const segments = [];
+                    for (let start = 0; start < duration; start += intervalSeconds) {
+                        const end = Math.min(duration, start + intervalSeconds);
+                        segments.push({
+                            start_in_seconds: Math.floor(start),
+                            end_in_seconds: Math.floor(end),
+                            start_label: formatTimestamp(start),
+                            end_label: formatTimestamp(end)
+                        });
+                    }
+                    return segments;
+                };
+
+                const countWords = (text) => {
+                    return (text || '').trim().split(/\s+/).filter(Boolean).length;
+                };
+
+                const trimToWordLimit = (text, maxWords) => {
+                    const words = (text || '').trim().split(/\s+/).filter(Boolean);
+                    if (words.length <= maxWords) {
+                        return (text || '').trim();
+                    }
+
+                    let trimmed = words.slice(0, maxWords).join(' ');
+                    trimmed = trimmed.replace(/[;,]\s*$/, '.');
+                    if (!/[.!?]$/.test(trimmed)) {
+                        trimmed += '.';
+                    }
+                    return trimmed;
+                };
+
+                const normalizeAdDescriptions = (descriptions, targetWords) => {
+                    const maxWords = Math.max(8, (parseInt(targetWords, 10) || 25) + 5);
+                    return (descriptions || []).map((desc) => {
+                        const raw = (desc?.description || '').trim();
+                        const cleaned = raw.replace(/^\[\d+:\d{2}\s*-\s*\d+:\d{2}\]\s*/i, '');
+                        const normalized = trimToWordLimit(cleaned, maxWords);
+                        return {
+                            ...desc,
+                            description: normalized,
+                            _wordCount: countWords(normalized)
+                        };
+                    });
+                };
+
                 let isAdGenerationRunning = false;
                 let cancelAdGeneration = false;
                 const generateAdButton = sidebar.querySelector('#generate-ad-button');
@@ -2494,71 +2562,50 @@
 
                         isAdGenerationRunning = true;
                         cancelAdGeneration = false;
-                        generateAdButton.textContent = 'Capturing frames... (Click to cancel)';
+                        generateAdButton.textContent = 'Preparing segments... (Click to cancel)';
                         generateAdButton.disabled = false;
                         
                         const duration = video.duration;
                         const frequency = sidebar.querySelector('.pill-button[data-frequency].active')?.dataset.frequency || 'sometimes';
-                        
-                        let interval;
-                        switch (frequency) {
-                            case 'rarely':
-                                interval = 60;
-                                break;
-                            case 'sometimes':
-                                interval = 30;
-                                break;
-                            case 'often':
-                                interval = 15;
-                                break;
-                            case 'very-often':
-                                interval = 8;
-                                break;
-                            default:
-                                interval = 60;
-                        }
+                        const interval = getFrequencyIntervalSeconds(frequency);
+                        const segments = buildAdSegments(duration, interval);
 
-                        const timestamps = [];
-                        for (let i = 0; i < duration; i += interval) {
-                            timestamps.push(i);
-                        }
-
-                        console.log('[AD] Capturing frames at timestamps:', timestamps);
+                        console.log('[AD] Generated time segments:', segments);
 
                         try {
-                            const frames = [];
-                            for (const timestamp of timestamps) {
-                                if (cancelAdGeneration) {
-                                    throw new Error('Cancelled by user');
-                                }
-                                try {
-                                    console.log(`[AD] Capturing frame at ${timestamp}s`);
-                                    const frameData = await captureVideoFrame(timestamp);
-                                    frames.push({
-                                        timestamp: timestamp,
-                                        frameData: frameData
-                                    });
-                                } catch (error) {
-                                    console.error(`[AD] Failed to capture frame at ${timestamp}s:`, error);
-                                }
-                            }
-
                             if (cancelAdGeneration) {
                                 throw new Error('Cancelled by user');
                             }
 
-                            if (frames.length === 0) {
-                                throw new Error('No frames were captured.');
+                            if (segments.length === 0) {
+                                throw new Error('Could not generate time segments for AD.');
                             }
 
-                            console.log('[AD] Frame capture complete. Sending to Gemini...');
+                            console.log('[AD] Segment planning complete. Sending URL + segments to Gemini...');
                             generateAdButton.textContent = 'Generating descriptions... (Click to cancel)';
 
                             const customizations = {
-                                length: sidebar.querySelector('#length-slider').value,
+                                length: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
+                                frequency,
+                                intervalSeconds: interval,
                                 emphasis: sidebar.querySelector('.pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
                                 subjectiveness: sidebar.querySelector('.pill-button[data-narration].active')?.dataset.narration || 'objective',
                                 colorPreference: sidebar.querySelector('.pill-button[data-color].active')?.dataset.color || 'on',
+                                presentation: {
+                                    volume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 100),
+                                    speed: parseInt(sidebar.querySelector('#ad-speed-slider')?.value || 50),
+                                    voice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'human',
+                                    gender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female'
+                                },
+                                content: {
+                                    emphasis: sidebar.querySelector('.pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
+                                    narrationStyle: sidebar.querySelector('.pill-button[data-narration].active')?.dataset.narration || 'objective',
+                                    colorDescriptions: sidebar.querySelector('.pill-button[data-color].active')?.dataset.color || 'on'
+                                },
+                                setup: {
+                                    adEnabled: true,
+                                    pauseDuringAd: sidebar.querySelector('#pause-ad-group .pill-button.active')?.dataset.action === 'pause-on'
+                                }
                             };
 
                             const videoUrl = window.location.href;
@@ -2569,8 +2616,9 @@
                                 chrome.runtime.sendMessage({
                                     type: 'CALL_GEMINI_FOR_AD',
                                     customizations: customizations,
-                                    frames: frames,
-                                    videoUrl: videoUrl
+                                    videoUrl: videoUrl,
+                                    videoDuration: Math.floor(duration),
+                                    segments: segments
                                 }, (response) => {
                                     if (cancelAdGeneration) {
                                         reject(new Error('Cancelled by user'));
@@ -2600,12 +2648,22 @@
                                     descriptions = adData.VideoMetadata.AudioDescriptions;
                                 }
 
-                                adSchedule = descriptions.map((desc, index) => ({
-                                    timestamp: (desc.timestamp_ms || desc.timestamp_in_seconds * 1000) / 1000,
-                                    description: desc.description,
-                                    played: false,
-                                    buttonId: `ad-speaker-btn-${index}`
-                                }));
+                                const selectedLength = parseInt(sidebar.querySelector('#length-slider')?.value || 25, 10);
+                                descriptions = normalizeAdDescriptions(descriptions, selectedLength);
+                                console.log('[AD] Normalized description word counts:', descriptions.map(d => d._wordCount));
+
+                                const defaultDescription = 'Scene continues with no major visible change in this section.';
+                                adSchedule = segments.map((segment, index) => {
+                                    const modelEntry = descriptions[index] || {};
+                                    const modelText = (modelEntry.description || '').trim();
+                                    return {
+                                        timestamp: segment.start_in_seconds,
+                                        endTimestamp: segment.end_in_seconds,
+                                        description: modelText || defaultDescription,
+                                        played: false,
+                                        buttonId: `ad-speaker-btn-${index}`
+                                    };
+                                });
                                 adScheduleVideoUrl = window.location.href; // Track video for this schedule
 
                                 generateAdButton.textContent = 'Preloading audio...';
