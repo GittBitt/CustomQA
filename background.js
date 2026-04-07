@@ -56,35 +56,31 @@ async function getIdToken() {
   });
 }
 
-// Refresh Firebase ID token
+// Refresh Firebase ID token via backend (no longer calls securetoken.googleapis.com directly)
 async function refreshIdToken(refreshToken) {
   try {
-    console.log('[BG] Refreshing Firebase token...');
-    const response = await fetch(
-      `https://securetoken.googleapis.com/v1/token?key=${FIREBASE_CONFIG.apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
-      }
-    );
+    console.log('[BG] Refreshing token via backend...');
+    const response = await fetch(`${BACKEND_URL}/api/auth/refresh-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken })
+    });
 
     const data = await response.json();
-    console.log('[BG] Firebase refresh response status:', response.status);
+    console.log('[BG] Backend refresh response status:', response.status);
     
     if (!response.ok) {
-      console.error('[BG] Firebase refresh failed:', data);
-      throw new Error(data.error?.message || 'Token refresh failed');
+      console.error('[BG] Backend refresh failed:', data);
+      throw new Error(data.error || 'Token refresh failed');
     }
     
-    if (!data.id_token) {
-      console.error('[BG] No id_token in refresh response:', data);
-      throw new Error('No id_token in response');
+    if (!data.idToken) {
+      console.error('[BG] No idToken in refresh response:', data);
+      throw new Error('No idToken in response');
     }
 
-    const newIdToken = data.id_token;
-    const expiresInSeconds = parseInt(data.expires_in || '3600', 10);
-    const newExpiresAt = Date.now() + Math.max(0, expiresInSeconds - 60) * 1000;
+    const newIdToken = data.idToken;
+    const newExpiresAt = data.expiresAt;
     
     // Update Chrome storage with new token
     chrome.storage.local.set({
@@ -92,7 +88,7 @@ async function refreshIdToken(refreshToken) {
       customqa_tokenExpiresAt: newExpiresAt
     });
     
-    console.log('[BG] Token updated in storage, expires in', expiresInSeconds, 'seconds');
+    console.log('[BG] Token updated in storage, expires at', new Date(newExpiresAt).toISOString());
     return newIdToken;
   } catch (error) {
     console.error('[BG] Error refreshing token:', error);

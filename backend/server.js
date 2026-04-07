@@ -695,6 +695,155 @@ app.post('/api/call-tts', verifyToken, async (req, res) => {
   }
 });
 
+// ==================== AUTH ENDPOINTS (Firebase proxy) ====================
+
+// Refresh Firebase ID token (replaces securetoken.googleapis.com call from extension)
+app.post('/api/auth/refresh-token', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+    
+    if (!refreshToken) {
+      return res.status(400).json({ error: 'Missing refreshToken' });
+    }
+
+    console.log('[Auth] Refreshing token...');
+    const response = await fetch(
+      `https://securetoken.googleapis.com/v1/token?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
+      }
+    );
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      console.error('[Auth] Refresh failed:', data);
+      return res.status(401).json({ error: data.error?.message || 'Token refresh failed' });
+    }
+
+    if (!data.id_token) {
+      console.error('[Auth] No id_token in response:', data);
+      return res.status(401).json({ error: 'No id_token in response' });
+    }
+
+    const expiresInSeconds = parseInt(data.expires_in || '3600', 10);
+    const expiresAt = Date.now() + Math.max(0, expiresInSeconds - 60) * 1000;
+
+    console.log('[Auth] Token refreshed successfully');
+    res.json({
+      idToken: data.id_token,
+      refreshToken: data.refresh_token || refreshToken,
+      expiresAt,
+      expiresIn: expiresInSeconds
+    });
+  } catch (error) {
+    console.error('[Auth] Error refreshing token:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Sign up with email/password (replaces identitytoolkit.googleapis.com call from extension)
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Missing email or password' });
+    }
+
+    console.log('[Auth] Signup request for:', email);
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password,
+          returnSecureToken: true
+        })
+      }
+    );
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      console.error('[Auth] Signup failed:', data);
+      return res.status(response.status).json({ 
+        error: data.error?.message || 'Signup failed' 
+      });
+    }
+
+    console.log('[Auth] User signed up:', email);
+    const expiresInSeconds = parseInt(data.expiresIn || '3600', 10);
+    const expiresAt = Date.now() + expiresInSeconds * 1000;
+
+    res.json({
+      idToken: data.idToken,
+      refreshToken: data.refreshToken,
+      uid: data.localId,
+      email: data.email,
+      expiresAt,
+      expiresIn: expiresInSeconds
+    });
+  } catch (error) {
+    console.error('[Auth] Error signing up:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Log in with email/password (replaces identitytoolkit.googleapis.com call from extension)
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Missing email or password' });
+    }
+
+    console.log('[Auth] Login request for:', email);
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password,
+          returnSecureToken: true
+        })
+      }
+    );
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      console.error('[Auth] Login failed:', data);
+      return res.status(response.status).json({
+        error: data.error?.message || 'Login failed'
+      });
+    }
+
+    console.log('[Auth] User logged in:', email);
+    const expiresInSeconds = parseInt(data.expiresIn || '3600', 10);
+    const expiresAt = Date.now() + expiresInSeconds * 1000;
+
+    res.json({
+      idToken: data.idToken,
+      refreshToken: data.refreshToken,
+      uid: data.localId,
+      email: data.email,
+      expiresAt,
+      expiresIn: expiresInSeconds
+    });
+  } catch (error) {
+    console.error('[Auth] Error logging in:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ==================== HEALTH CHECK ====================
 
 app.get('/health', (req, res) => {

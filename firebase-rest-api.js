@@ -56,27 +56,31 @@ try {
       try {
         console.log('[FirebaseAPI.signup] Starting signup for:', email);
         const response = await fetch(
-          `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${window.firebaseConfig.apiKey}`,
+          `${BACKEND_URL}/api/auth/signup`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email, password,
-              returnSecureToken: true
-            })
+            body: JSON.stringify({ email, password })
           }
         );
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error?.message || 'Signup failed');
+        if (!response.ok) throw new Error(data.error || 'Signup failed');
 
         idToken = data.idToken;
-        currentUser = { uid: data.localId, email };
+        currentUser = { uid: data.uid, email };
+        
+        // Store refresh token
+        await new Promise((resolve) => {
+          chrome.storage.local.set({
+            customqa_refreshToken: data.refreshToken,
+            customqa_tokenExpiresAt: data.expiresAt
+          }, resolve);
+        });
+
         await saveAuthState();
         
-        // Create user in Firestore (backend handles it)
-        await this.createUserDocument(data.localId, email, role);
-        
-        return { success: true, user: { email, role }, uid: data.localId };
+        console.log('[FirebaseAPI.signup] Signup successful');
+        return { success: true, user: { email, role }, uid: data.uid };
       } catch (error) {
         console.error('[FirebaseAPI.signup] Error:', error);
         return { success: false, error: error.message };
@@ -87,21 +91,31 @@ try {
       try {
         console.log('[FirebaseAPI.login] Starting login for:', email);
         const response = await fetch(
-          `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${window.firebaseConfig.apiKey}`,
+          `${BACKEND_URL}/api/auth/login`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password, returnSecureToken: true })
+            body: JSON.stringify({ email, password })
           }
         );
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error?.message || 'Login failed');
+        if (!response.ok) throw new Error(data.error || 'Login failed');
 
         idToken = data.idToken;
-        currentUser = { uid: data.localId, email };
-        await saveAuthState();
+        currentUser = { uid: data.uid, email };
         
-        return { success: true, user: { email }, uid: data.localId };
+        // Store refresh token
+        await new Promise((resolve) => {
+          chrome.storage.local.set({
+            customqa_refreshToken: data.refreshToken,
+            customqa_tokenExpiresAt: data.expiresAt
+          }, resolve);
+        });
+
+        await saveAuthState();
+
+        console.log('[FirebaseAPI.login] Login successful');
+        return { success: true, user: { email }, uid: data.uid };
       } catch (error) {
         console.error('[FirebaseAPI.login] Error:', error);
         return { success: false, error: error.message };
