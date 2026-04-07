@@ -2,8 +2,21 @@
 // Handles loading/saving user settings and video data to Firestore via REST API
 
 window.DatabaseIntegration = {
+  // Get current user - check FirebaseAPI first, then Chrome storage
+  async getUser() {
+    let user = window.FirebaseAPI?.getCurrentUser();
+    if (user) return user;
+
+    // Fallback: get from Chrome storage if FirebaseAPI not ready
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['customqa_currentUser'], (items) => {
+        resolve(items.customqa_currentUser || null);
+      });
+    });
+  },
+
   async loadUserSettings() {
-    const user = window.FirebaseAPI?.getCurrentUser();
+    const user = await this.getUser();
     if (!user) return null;
     
     try {
@@ -17,7 +30,7 @@ window.DatabaseIntegration = {
   },
 
   async saveADSettings(customizations) {
-    const user = window.FirebaseAPI?.getCurrentUser();
+    const user = await this.getUser();
     if (!user) {
       console.log('[CustomQA] User not logged in, not saving settings');
       return { success: false };
@@ -56,7 +69,7 @@ window.DatabaseIntegration = {
   },
 
   async saveVQASettings(customizations) {
-    const user = window.FirebaseAPI?.getCurrentUser();
+    const user = await this.getUser();
     if (!user) {
       console.log('[CustomQA] User not logged in, not saving VQA settings');
       return { success: false };
@@ -89,7 +102,7 @@ window.DatabaseIntegration = {
   },
 
   async saveGeneratedAD(videoUrl, videoLength, customizations, generatedAds) {
-    const user = window.FirebaseAPI?.getCurrentUser();
+    const user = await this.getUser();
     if (!user) {
       console.log('User not logged in, not saving AD');
       return false;

@@ -1,4 +1,104 @@
-console.log('Background script loaded - VERSION 3');
+console.log('Background script loaded - VERSION 4 (Backend)');
+
+const BACKEND_URL = 'http://localhost:3000'; // Change to your deployed backend URL
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A',
+  projectId: 'customqa-cf40b'
+};
+
+// Get ID token and refresh if necessary
+async function getIdToken() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(['customqa_idToken', 'customqa_refreshToken', 'customqa_tokenExpiresAt', 'customqa_currentUser'], (items) => {
+      if (chrome.runtime.lastError) {
+        console.error('[BG] Chrome storage error:', chrome.runtime.lastError);
+        reject(chrome.runtime.lastError);
+        return;
+      }
+
+      let token = items.customqa_idToken || null;
+      const refreshToken = items.customqa_refreshToken || null;
+      const expiresAt = Number(items.customqa_tokenExpiresAt || 0);
+      const user = items.customqa_currentUser;
+      
+      console.log('[BG] Token check:', {
+        hasToken: !!token,
+        hasRefreshToken: !!refreshToken,
+        expiresAt: expiresAt,
+        isExpired: expiresAt && Date.now() >= expiresAt,
+        user: user?.email
+      });
+      
+      // Check if token is expired and refresh if needed
+      if (token && refreshToken && expiresAt && Date.now() >= expiresAt) {
+        console.log('[BG] Token expired, attempting refresh...');
+        refreshIdToken(refreshToken)
+          .then((newToken) => {
+            if (newToken) {
+              token = newToken;
+              console.log('[BG] Token refreshed successfully');
+            } else {
+              console.warn('[BG] Token refresh returned null');
+            }
+            resolve(token);
+          })
+          .catch((error) => {
+            console.error('[BG] Token refresh failed, using old token:', error);
+            resolve(token); // Fall back to old token
+          });
+      } else {
+        if (!token) {
+          console.warn('[BG] No valid token available');
+        }
+        resolve(token);
+      }
+    });
+  });
+}
+
+// Refresh Firebase ID token
+async function refreshIdToken(refreshToken) {
+  try {
+    console.log('[BG] Refreshing Firebase token...');
+    const response = await fetch(
+      `https://securetoken.googleapis.com/v1/token?key=${FIREBASE_CONFIG.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
+      }
+    );
+
+    const data = await response.json();
+    console.log('[BG] Firebase refresh response status:', response.status);
+    
+    if (!response.ok) {
+      console.error('[BG] Firebase refresh failed:', data);
+      throw new Error(data.error?.message || 'Token refresh failed');
+    }
+    
+    if (!data.id_token) {
+      console.error('[BG] No id_token in refresh response:', data);
+      throw new Error('No id_token in response');
+    }
+
+    const newIdToken = data.id_token;
+    const expiresInSeconds = parseInt(data.expires_in || '3600', 10);
+    const newExpiresAt = Date.now() + Math.max(0, expiresInSeconds - 60) * 1000;
+    
+    // Update Chrome storage with new token
+    chrome.storage.local.set({
+      customqa_idToken: newIdToken,
+      customqa_tokenExpiresAt: newExpiresAt
+    });
+    
+    console.log('[BG] Token updated in storage, expires in', expiresInSeconds, 'seconds');
+    return newIdToken;
+  } catch (error) {
+    console.error('[BG] Error refreshing token:', error);
+    return null;
+  }
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.tabs.query({}, (tabs) => {
@@ -20,353 +120,189 @@ chrome.tabs.onUpdated.addListener((tabId, tab) => {
     }
   });
 
-// Handle Gemini API calls from content script
+// Main message listener
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('[BG] Received message:', request.type);
+
+  const mapVoiceFromRequest = () => {
+    if (request.voice && typeof request.voice === 'string') {
+      return request.voice;
+    }
+    const gender = (request.gender || '').toLowerCase();
+    return gender === 'male' ? 'onyx' : 'nova';
+  };
   
-  if (request.type === 'CALL_GEMINI') {
-    console.log('[BG] Processing CALL_GEMINI');
-    
-    // Use async IIFE to handle async operation
-    (async () => {
-      try {
-        const result = await callGeminiAPI(request.prompt, request.frameData);
-        console.log('[BG] Sending success response');
-        sendResponse({ success: true, text: result });
-      } catch (error) {
-        console.error('[BG] Error:', error);
-        sendResponse({ success: false, error: error.message });
+  (async () => {
+    try {
+      const idToken = await getIdToken();
+      if (!idToken) {
+        sendResponse({ success: false, error: 'Not logged in' });
+        return;
       }
-    })();
-    
-    return true; // Keep the message channel open for async response
-  } else if (request.type === 'CALL_GEMINI_FOR_AD') {
-    const resolvedVideoUrl = resolveVideoUrlForAdRequest(request, sender);
-    console.log('[BG] Processing CALL_GEMINI_FOR_AD');
-    console.log('[BG] Video URL received:', request.videoUrl);
-    console.log('[BG] Video URL from sender tab:', sender?.tab?.url);
-    console.log('[BG] Resolved video URL:', resolvedVideoUrl);
-    console.log('[BG] Segments received:', request.segments?.length);
-    
-    (async () => {
-      try {
-        const prompt = build_ad_prompt(
-          request.customizations,
-          resolvedVideoUrl,
-          request.videoDuration,
-          request.segments
-        );
+
+      let result;
+      
+      if (request.type === 'CALL_GEMINI') {
+        console.log('[BG] Processing CALL_GEMINI');
+        result = await callBackend('/api/call-gemini', {
+          text: request.prompt,
+          frames: request.frameData ? [request.frameData] : [],
+          options: request.options || {}
+        }, idToken);
+        sendResponse({ success: true, text: result.result });
         
-        console.log('[BG] Calling Gemini for AD with URL + segment metadata');
-        const result = await callGeminiAPI(prompt, null, {
-          videoUrl: resolvedVideoUrl,
-          videoDuration: request.videoDuration,
-          segments: request.segments,
-          taskType: 'ad'
-        });
-        console.log('[BG] Sending success response', result?.substring?.(0, 100));
-        sendResponse({ success: true, text: result });
-      } catch (error) {
-        console.error('[BG] Error:', error);
-        sendResponse({ success: false, error: error.message });
-      }
-    })();
-    
-    return true;
-  } else if (request.type === 'CALL_GEMINI_VQA') {
-    const resolvedVideoUrl = resolveVideoUrlForAdRequest(request, sender);
-    console.log('[BG] Processing CALL_GEMINI_VQA');
-    console.log('[BG] Video URL from sender tab:', sender?.tab?.url);
-    console.log('[BG] Resolved video URL:', resolvedVideoUrl);
-    console.log('[BG] VQA Timestamp:', request.timestamp);
-    
-    (async () => {
-      try {
-        console.log('[BG] Calling Gemini for VQA with URL at timestamp');
-        const result = await callGeminiAPI(request.prompt, null, {
-          videoUrl: resolvedVideoUrl,
-          timestamp: request.timestamp,
-          taskType: 'vqa'
-        });
-        console.log('[BG] Sending success response', result?.substring?.(0, 100));
-        sendResponse({ success: true, text: result });
-      } catch (error) {
-        console.error('[BG] Error:', error);
-        sendResponse({ success: false, error: error.message });
-      }
-    })();
-    
-    return true;
-  } else if (request.type === 'CALL_GEMINI_VQA_MULTIFRAME') {
-    console.log('[BG] Processing CALL_GEMINI_VQA_MULTIFRAME');
-    console.log('[BG] Frames received:', request.frames?.length);
-    
-    (async () => {
-      try {
-        const framesForGemini = request.frames && Array.isArray(request.frames) 
-          ? request.frames.map(f => ({
-              frameData: f.frameData,
-              timestamp: f.timestamp
-            }))
-          : [];
+      } else if (request.type === 'CALL_GEMINI_FOR_AD') {
+        console.log('[BG] Processing CALL_GEMINI_FOR_AD');
         
-        console.log('[BG] Calling Gemini with', framesForGemini.length, 'frames');
-        const result = await callGeminiAPI(request.prompt, framesForGemini);
-        console.log('[BG] Sending success response', result?.substring?.(0, 100));
-        sendResponse({ success: true, text: result });
-      } catch (error) {
-        console.error('[BG] Error:', error);
-        sendResponse({ success: false, error: error.message });
+        // Format segments for the prompt
+        const segmentsList = (request.segments || []).map(seg => {
+          if (typeof seg === 'number') {
+            return { timestamp_in_seconds: seg };
+          }
+          return seg;
+        });
+        
+        // Construct prompt for AD generation
+        const prompt = `You are an expert audio description writer. Generate audio descriptions for specific time segments of a YouTube video.
+
+Video URL: ${request.videoUrl}
+Total Duration: ${request.videoDuration} seconds
+
+Settings:
+- Length: ${request.customizations?.adLength || 25} seconds per description
+- Frequency: ${request.customizations?.adFrequency || 'sometimes'}
+- Emphasis: ${request.customizations?.adEmphasis || 'balanced'}
+- Narration Style: ${request.customizations?.adNarrationStyle || 'objective'}
+- Color Preference: ${request.customizations?.adColorPreference || 'on'}
+
+Timestamps to describe:
+${JSON.stringify(segmentsList, null, 2)}
+
+Return a JSON array with objects containing:
+- timestamp_in_seconds: the time marker (number)
+- description: a compelling audio description appropriate for the settings above (string)
+
+Example format:
+[
+  {"timestamp_in_seconds": 10, "description": "A person walks through a door..."},
+  {"timestamp_in_seconds": 25, "description": "The scene changes to..."}
+]`;
+
+        result = await callBackend('/api/call-gemini', {
+          text: prompt,
+          frames: request.segments || [],
+          options: {
+            videoUrl: request.videoUrl,
+            segments: request.segments
+          }
+        }, idToken);
+        sendResponse({ success: true, text: result.result });
+        
+      } else if (request.type === 'CALL_GEMINI_VQA') {
+        console.log('[BG] Processing CALL_GEMINI_VQA');
+        result = await callBackend('/api/call-gemini', {
+          text: request.prompt,
+          frames: request.frameData ? [request.frameData] : [],
+          options: { videoUrl: request.videoUrl }
+        }, idToken);
+        sendResponse({ success: true, text: result.result });
+        
+      } else if (request.type === 'CALL_GEMINI_VQA_MULTIFRAME') {
+        console.log('[BG] Processing CALL_GEMINI_VQA_MULTIFRAME');
+        result = await callBackend('/api/call-gemini', {
+          text: request.prompt,
+          frames: request.frames || [],
+          options: { videoUrl: request.videoUrl }
+        }, idToken);
+        sendResponse({ success: true, text: result.result });
+        
+      } else if (request.type === 'CALL_WHISPER') {
+        console.log('[BG] Processing CALL_WHISPER');
+        result = await callBackend('/api/call-whisper', {
+          audioBlob: request.audioBlob
+        }, idToken);
+        sendResponse({ success: true, text: result.text });
+        
+      } else if (request.type === 'CALL_TTS') {
+        console.log('[BG] Processing CALL_TTS');
+        result = await callBackend('/api/call-tts', {
+          text: request.text,
+          voice: mapVoiceFromRequest(),
+          speed: request.speed
+        }, idToken);
+        sendResponse({ success: true, audioUrl: result.audioUrl });
+
+      } else if (request.type === 'CALL_OPENAI_TTS') {
+        console.log('[BG] Processing CALL_OPENAI_TTS');
+        result = await callBackend('/api/call-tts', {
+          text: request.text,
+          voice: mapVoiceFromRequest(),
+          speed: request.speed
+        }, idToken);
+        sendResponse({ success: true, audioDataUrl: result.audioUrl });
+
+      } else if (request.type === 'PRELOAD_OPENAI_TTS') {
+        console.log('[BG] Processing PRELOAD_OPENAI_TTS');
+        result = await callBackend('/api/call-tts', {
+          text: request.text,
+          voice: mapVoiceFromRequest(),
+          speed: request.speed
+        }, idToken);
+        sendResponse({ success: true, text: request.text, audioDataUrl: result.audioUrl });
+
+      } else {
+        sendResponse({ success: false, error: `Unsupported message type: ${request.type}` });
       }
-    })();
-    
-    return true;
-  } else if (request.type === 'CALL_OPENAI_TTS' || request.type === 'PRELOAD_OPENAI_TTS') {
-    console.log(`[BG] Processing ${request.type}`);
-    
-    (async () => {
-      try {
-        const audioDataUrl = await getOpenAI_TTS_API(request.text, request.gender, request.speed);
-        sendResponse({ success: true, audioDataUrl: audioDataUrl, text: request.text });
-      } catch (error) {
-        console.error('[BG] Error:', error);
-        sendResponse({ success: false, error: error.message, text: request.text });
-      }
-    })();
-    
-    return true;
-  } else if (request.type === 'CALL_WHISPER') {
-    console.log('[BG] Processing CALL_WHISPER');
-    
-    (async () => {
-      try {
-        const transcribedText = await callWhisperAPI(request.audioBlob, request.settings);
-        sendResponse({ success: true, text: transcribedText });
-      } catch (error) {
-        console.error('[BG] Whisper Error:', error);
-        sendResponse({ success: false, error: error.message });
-      }
-    })();
-    
-    return true;
-  } else if (request.type === 'OPEN_POPUP') {
-    chrome.action.openPopup();
-    return true;
-  } else if (request.type === 'AUTH_SIGNUP') {
-    handleAuthSignup(request, sendResponse);
-    return true;
-  } else if (request.type === 'AUTH_LOGIN') {
-    handleAuthLogin(request, sendResponse);
-    return true;
-  } else if (request.type === 'AUTH_LOGOUT') {
-    handleAuthLogout(sendResponse);
-    return true;
-  } else if (request.type === 'AUTH_CHECK') {
-    handleAuthCheck(sendResponse);
-    return true;
-  }
+    } catch (error) {
+      console.error('[BG] Error:', error);
+      sendResponse({ success: false, error: error.message });
+    }
+  })();
+  
+  return true; // Keep message channel open for async response
 });
 
-function resolveVideoUrlForAdRequest(request, sender) {
-  const senderTabUrl = sender?.tab?.url || '';
-  const requestVideoUrl = request?.videoUrl || '';
+// Call backend API
+async function callBackend(endpoint, body, idToken) {
+  console.log('[Backend] Calling', endpoint, 'with token:', idToken ? `${idToken.substring(0, 20)}...` : 'NONE');
+  
+  if (!idToken) {
+    throw new Error('No authentication token available');
+  }
+  
+  const response = await fetch(`${BACKEND_URL}${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    },
+    body: JSON.stringify(body)
+  });
 
-  // Prefer the real tab URL so URL detection is automatic and does not depend on payload.
-  const candidates = [senderTabUrl, requestVideoUrl].filter(Boolean);
+  console.log('[Backend] Response status:', response.status);
 
-  for (const candidate of candidates) {
-    if (candidate.includes('youtube.com/watch') || candidate.includes('youtu.be/')) {
-      return candidate;
-    }
+  if (!response.ok) {
+    const error = await response.text();
+    console.error(`[Backend] Error ${response.status}:`, error);
+    throw new Error(`Backend error: ${response.status}`);
   }
 
-  // Fallback for non-YouTube pages where a regular video element may exist.
-  return senderTabUrl || requestVideoUrl || '';
-}
-
-async function getOpenAI_TTS_API(text, gender, speed = 1.0) {
-  let apiKey = '';
-  try {
-    console.log('[OpenAI TTS] Fetching API key...');
-    const envResponse = await fetch(chrome.runtime.getURL('.env'));
-    
-    if (!envResponse.ok) {
-      throw new Error(`Failed to fetch .env: ${envResponse.statusText}`);
-    }
-    
-    const envText = await envResponse.text();
-    const lines = envText.split('\n');
-    const apiKeyLine = lines.find(line => line.trim().startsWith('OPENAI_API_KEY='));
-    
-    if (!apiKeyLine) {
-      throw new Error('OPENAI_API_KEY not found in .env');
-    }
-    
-    apiKey = apiKeyLine.trim().split('OPENAI_API_KEY=')[1].trim();
-    
-    if (!apiKey) {
-      throw new Error('OPENAI_API_KEY is empty');
-    }
-    
-    console.log(`[OpenAI TTS] Using API Key: ...${apiKey.slice(-4)}`);
-    
-    let voice = 'alloy'; // default voice, often perceived as neutral/androgynous
-    if (gender === 'female') {
-        voice = 'nova';
-    } else if (gender === 'male') {
-        voice = 'echo';
-    } else if (gender === 'androgynous') {
-        voice = 'alloy'; // Explicitly use alloy for androgynous
-    }
-
-    // Normalize speed from UI slider range (0-100) to OpenAI range (0.25-4.0)
-    // UI: 50 = normal speed (1.0), 0 = slowest (0.25), 100 = fastest (4.0)
-    // Using piecewise linear mapping because 1.0 is NOT the midpoint
-    let normalizedSpeed = 1.0;
-    if (typeof speed === 'number') {
-        if (speed <= 50) {
-            // 0-50 maps to 0.25-1.0
-            normalizedSpeed = 0.25 + (speed / 50) * (1.0 - 0.25);
-        } else {
-            // 50-100 maps to 1.0-4.0
-            normalizedSpeed = 1.0 + ((speed - 50) / 50) * (4.0 - 1.0);
-        }
-        normalizedSpeed = Math.max(0.25, Math.min(4.0, normalizedSpeed)); // Clamp to valid range
-    }
-
-    console.log(`[OpenAI TTS] Calling API with text: "${text.substring(0, 50)}..." voice: "${voice}" speed: ${normalizedSpeed}`);
-    const response = await fetch('https://api.openai.com/v1/audio/speech', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'tts-1',
-        input: text,
-        voice: voice,
-        speed: normalizedSpeed
-      }),
-    });
-
-    console.log('[OpenAI TTS] API response status:', response.status);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('[OpenAI TTS] API error:', errorData);
-      throw new Error(`OpenAI API error: ${errorData.error.message}`);
-    }
-
-    const audioBlob = await response.blob();
-    console.log('[OpenAI TTS] Received audio blob, size:', audioBlob.size);
-    const reader = new FileReader();
-    return new Promise((resolve, reject) => {
-      reader.onloadend = () => {
-        console.log('[OpenAI TTS] Successfully created data URL.');
-        resolve(reader.result);
-      };
-      reader.onerror = (error) => {
-        console.error('[OpenAI TTS] FileReader error:', error);
-        reject(error);
-      };
-      reader.readAsDataURL(audioBlob);
-    });
-  } catch (error) {
-    console.error("[OpenAI TTS] Error calling OpenAI TTS API:", error.message);
-    if (String(error?.message || '').includes('Failed to fetch')) {
-      throw new Error('[OpenAI TTS] Error: Failed to fetch. Check extension host permissions for https://api.openai.com/*, network connectivity, and whether the API key is valid and active.');
-    }
-    throw new Error(`[OpenAI TTS] Error: ${error.message}`);
+  const data = await response.json();
+  if (!data.success && data.error) {
+    throw new Error(data.error);
   }
+
+  return data;
 }
 
-async function callWhisperAPI(audioDataUrl, whisperSettings = {}) {
-  let apiKey = '';
-  try {
-    console.log('[Whisper API] Fetching API key...');
-    const envResponse = await fetch(chrome.runtime.getURL('.env'));
-    
-    if (!envResponse.ok) {
-      throw new Error(`Failed to fetch .env: ${envResponse.statusText}`);
-    }
-    
-    const envText = await envResponse.text();
-    const lines = envText.split('\n');
-    const apiKeyLine = lines.find(line => line.trim().startsWith('OPENAI_API_KEY='));
-    
-    if (!apiKeyLine) {
-      throw new Error('OPENAI_API_KEY not found in .env');
-    }
-    
-    apiKey = apiKeyLine.trim().split('OPENAI_API_KEY=')[1].trim();
-    
-    if (!apiKey) {
-      throw new Error('OPENAI_API_KEY is empty');
-    }
-    
-    console.log(`[Whisper API] Using API Key: ...${apiKey.slice(-4)}`);
-    
-    // Convert data URL to blob
-    const response = await fetch(audioDataUrl);
-    const audioBlob = await response.blob();
-    
-    // Create FormData for multipart/form-data request
-    const formData = new FormData();
-    formData.append('file', audioBlob, 'audio.wav');
-    formData.append('model', 'whisper-1');
-    
-    // Add optional parameters if provided
-    if (whisperSettings.language) {
-      formData.append('language', whisperSettings.language);
-    }
-    if (whisperSettings.temperature !== undefined) {
-      formData.append('temperature', whisperSettings.temperature);
-    }
-    if (whisperSettings.prompt) {
-      formData.append('prompt', whisperSettings.prompt);
-    }
-    if (whisperSettings.responseFormat) {
-      formData.append('response_format', whisperSettings.responseFormat);
-    }
-    
-    console.log('[Whisper API] Calling API with settings:', {
-      language: whisperSettings.language || 'auto',
-      temperature: whisperSettings.temperature,
-      prompt: whisperSettings.prompt || 'none',
-      responseFormat: whisperSettings.responseFormat || 'json'
-    });
-    
-    const apiResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: formData
-    });
-    
-    console.log('[Whisper API] Response status:', apiResponse.status);
-    
-    if (!apiResponse.ok) {
-      const errorData = await apiResponse.json();
-      console.error('[Whisper API] API error:', errorData);
-      throw new Error(`Whisper API error: ${errorData.error?.message || apiResponse.statusText}`);
-    }
-    
-    const data = await apiResponse.json();
-    const transcribedText = data.text || '';
-    
-    console.log('[Whisper API] Successfully transcribed:', transcribedText);
-    return transcribedText;
-    
-  } catch (error) {
-    console.error("[Whisper API] Error calling Whisper API:", error.message);
-    throw new Error(`[Whisper API] Error: ${error.message}`);
-  }
-}
+// ==================== HELPER FUNCTIONS ====================
 
+// Build AD prompt with detailed guidelines - RESTORED VERSION
 function build_ad_prompt(customizations, videoUrl, videoDuration, segments) {
   const segmentTimeline = Array.isArray(segments) ? segments : [];
-  const targetWords = Number.isFinite(Number(customizations?.length)) ? Number(customizations.length) : 25;
+  const targetWords = Number.isFinite(Number(customizations?.adLength || customizations?.length)) 
+    ? Number(customizations.adLength || customizations.length) 
+    : 25;
   const maxWords = targetWords + 5;
   const minWords = Math.max(5, targetWords - 5);
   const frequencyToHumanText = {
@@ -376,13 +312,13 @@ function build_ad_prompt(customizations, videoUrl, videoDuration, segments) {
     'very-often': 'Every 8 seconds'
   };
 
-    let base_prompt = `
-    You are an AI designed to assist in creating high-quality and contextually rich descriptions for videos, aimed at enhancing accessibility for blind and low-vision (BLV) users.
-  The input consists of a video URL and predefined time sections. Craft audio descriptions that are highly personalised, based on guidance from the BLV.
-    You must follow all the given instructions. You should avoid any prefatory language, such as \`the video shows\`. Follow the General and Customised guidelines shared by the user. You should prioritise the customised guidelines while adhering to the general Guidelines:
+  let base_prompt = `
+You are an AI designed to assist in creating high-quality and contextually rich descriptions for videos, aimed at enhancing accessibility for blind and low-vision (BLV) users.
+The input consists of a video URL and predefined time sections. Craft audio descriptions that are highly personalised, based on guidance from the BLV.
+You must follow all the given instructions. You should avoid any prefatory language, such as "the video shows". Follow the General and Customised guidelines shared by the user. You should prioritise the customised guidelines while adhering to the general Guidelines:
 `;
 
-    const guidelines = `
+  const guidelines = `
 GENERAL AUDIO DESCRIPTION GUIDELINES:
 
 1. Avoid over-describing - Do not include non-essential visual details.
@@ -429,327 +365,75 @@ GENERAL AUDIO DESCRIPTION GUIDELINES:
 42. Provide description before the content rather than after.
 `;
 
-    const emphasis_guidelines = {
-        'character': 'Prioritize character-related details such as appearance, expressions, gestures, actions, and interactions. Focus on what people are doing and how they are doing it.',
-        'environment': 'Prioritize spatial descriptions, atmosphere, setting, background elements, layout, lighting, and environmental textures. Focus on where the action takes place and the mood of the setting.',
-        'balanced': 'Provide balanced descriptions following the general AD guidelines. Give equal attention to all visual elements.',
-        'instructional': 'Prioritize the main plot or instructional content. Focus on plot progression, cause-effect relationships, and key narrative developments. Ensure descriptions and transitions between scenes are strongly tied to story or instructional continuity. Secondary visual details should be included only when they enhance plot understanding.'
-    };
+  const emphasis_guidelines = {
+    'character': 'Prioritize character-related details such as appearance, expressions, gestures, actions, and interactions. Focus on what people are doing and how they are doing it.',
+    'environment': 'Prioritize spatial descriptions, atmosphere, setting, background elements, layout, lighting, and environmental textures. Focus on where the action takes place and the mood of the setting.',
+    'balanced': 'Provide balanced descriptions following the general AD guidelines. Give equal attention to all visual elements.',
+    'instructional': 'Prioritize the main plot or instructional content. Focus on plot progression, cause-effect relationships, and key narrative developments. Ensure descriptions and transitions between scenes are strongly tied to story or instructional continuity. Secondary visual details should be included only when they enhance plot understanding.'
+  };
 
-    const subjectiveness_guidelines = {
-        'objective': 'Maintain strict factual neutrality. Describe only observable visual elements without interpretation or emotional inference unless clearly visible. Avoid assumptions about motivations, intentions, or unstated emotional states. Use neutral, descriptive language.',
-        'subjective': 'Use interpretive language to convey atmosphere, emotional mood, and inferred character feelings when they reasonably align with visual cues. Use expressive vocabulary to enhance immersion for the BLV user. Include mood, tone, and emotional context.'
-    };
+  const subjectiveness_guidelines = {
+    'objective': 'Maintain strict factual neutrality. Describe only observable visual elements without interpretation or emotional inference unless clearly visible. Avoid assumptions about motivations, intentions, or unstated emotional states. Use neutral, descriptive language.',
+    'subjective': 'Use interpretive language to convey atmosphere, emotional mood, and inferred character feelings when they reasonably align with visual cues. Use expressive vocabulary to enhance immersion for the BLV user. Include mood, tone, and emotional context.'
+  };
 
-    base_prompt += `
+  base_prompt += `
 CUSTOM GUIDELINES SPECIFIED BY USER:
   - Description Length: Target approximately ${targetWords} words per description segment.
   - Hard Length Bounds: Each description MUST be between ${minWords} and ${maxWords} words.
-  - Frequency: ${frequencyToHumanText[customizations.frequency] || 'Every 30 seconds'} (${customizations.intervalSeconds || 30} second section size).
-  - Scene Changes: Identify when the scene transitions (different location, camera angle, or significant visual context change). Include the exact timestamp of each scene change within the description (e.g., "At 1:05, the scene shifts to...").
-  - Emphasis: ${emphasis_guidelines[customizations.emphasis] || emphasis_guidelines['balanced']}
-  - Style: ${subjectiveness_guidelines[customizations.subjectiveness] || subjectiveness_guidelines['objective']}
+  - Frequency: ${frequencyToHumanText[customizations.adFrequency] || frequencyToHumanText[customizations.frequency] || 'Every 30 seconds'} (${customizations.intervalSeconds || 30} second section size).
+  - Emphasis: ${emphasis_guidelines[customizations.adEmphasis || customizations.emphasis] || emphasis_guidelines['balanced']}
+  - Style: ${subjectiveness_guidelines[customizations.adNarrationStyle || customizations.subjectiveness] || subjectiveness_guidelines['objective']}
 
-  CONTENT CUSTOMIZATION SELECTED BY USER:
-  - Color descriptions setting: ${customizations.content?.colorDescriptions || customizations.colorPreference || 'on'}
-  - Audio Description enabled: ${customizations.setup?.adEnabled === false ? 'off' : 'on'}
-`;
+  VIDEO CONTEXT:
+  - Video URL: ${videoUrl || 'unknown'}
+  - Video duration (seconds): ${typeof videoDuration === 'number' ? videoDuration : 'unknown'}
 
-    if (customizations.colorPreference === 'off') {
-        base_prompt += `- Color Descriptions: IMPORTANT - Omit ALL color information from descriptions. Do not mention colors of objects, clothing, environments, or any visual elements.
-`;
-    }
-
-    base_prompt += `
 ${guidelines}
 
 TASK INSTRUCTIONS:
-  You are provided with a video URL and a list of fixed time segments. Your task is to generate comprehensive audio descriptions for each segment from its start timestamp to its end timestamp.
+  You are provided with a video URL and a list of fixed time segments. Your task is to generate comprehensive audio descriptions for each segment.
+
 CUSTOMIZATION PRIORITY RULE:
   User customizations are mandatory and override default stylistic tendencies. Do not ignore length, style, emphasis, or color settings.
 
 HARD OUTPUT RULES:
   1. Output valid JSON only (no markdown, no prose outside JSON).
   2. Every description MUST be between ${minWords} and ${maxWords} words.
-  3. Keep each segment concise. If many events occur, summarize and include only the most important scene changes with timestamps.
+  3. Keep each segment concise. If many events occur, summarize and include only the most important scene changes.
   4. Do not prepend bracket labels like "[0:00 - 0:30]" unless naturally part of a sentence.
 
-Your approach should be:
-  1. Use the provided video URL to determine visual content and context of the full video timeline.
-  2. For each segment in the provided timeline (e.g., 0:00-0:30 for "sometimes"), generate one description that summarizes the entire section.
-  3. Include silent periods when relevant so each section reflects what happens across the full interval, not only active moments.
-  4. Within each section description, explicitly include scene changes and their exact timestamps in chronological order.
-  5. Ensure each description is comprehensive for the full segment start-to-end progression.
-  6. Adhere to the user's selected presentation, content, and setup customizations.
-  7. Ensure descriptions are presented in chronological order by segment start timestamp.
-  8. Return descriptions as valid JSON matching the VideoMetadata schema.
-
-IMPORTANT: Your response must be valid JSON matching the VideoMetadata schema with the structure:
-{
-  "VideoMetadata": {
-    "audio_descriptions": [
-      {
-        "timestamp_start": <number>,
-        "timestamp_end": <number>,
-        "timestamp_in_seconds": <number>,
-        "description": "<audio description text for the time range starting at this timestamp>"
-      }
-    ]
+IMPORTANT: Your response must be valid JSON as an array of objects with this structure:
+[
+  {
+    "timestamp_in_seconds": <number>,
+    "description": "<audio description text>"
   }
-}
+]
 
-For each segment entry:
-- timestamp_start MUST equal the segment start time.
-- timestamp_end MUST equal the segment end time.
-- timestamp_in_seconds MUST be the same value as timestamp_start.
+SEGMENTS TO DESCRIBE (timestamps in seconds):
+${segmentTimeline.length > 0 ? segmentTimeline.map((seg, i) => {
+  const ts = typeof seg === 'number' ? seg : (seg.timestamp_in_seconds || seg.start_in_seconds || 0);
+  return `${i + 1}. Timestamp: ${ts}s`;
+}).join('\n') : '- No segments provided'}
 
-VIDEO CONTEXT:
-- Video URL: ${videoUrl || 'unknown'}
-- Video duration (seconds): ${typeof videoDuration === 'number' ? videoDuration : 'unknown'}
-
-SEGMENTS TO DESCRIBE (one JSON entry per segment, use segment start time for timestamp_in_seconds):
-${segmentTimeline.length > 0 ? segmentTimeline.map((segment, index) => `${index + 1}. ${segment.start_label || segment.start_in_seconds}s to ${segment.end_label || segment.end_in_seconds}s (start=${segment.start_in_seconds}, end=${segment.end_in_seconds})`).join('\n') : '- No segments provided'}
-
-Begin analyzing the video timeline now:
+Begin analyzing the video now and return only valid JSON:
 `;
 
-    return base_prompt;
+  return base_prompt;
 }
 
-async function callGeminiAPI(prompt, frames, options = {}) {
-  let apiKey = '';
-  try {
-    console.log('[Gemini API] Fetching API key...');
-    const envResponse = await fetch(chrome.runtime.getURL('.env'));
-    
-    if (!envResponse.ok) {
-      throw new Error(`Failed to fetch .env: ${envResponse.statusText}`);
-    }
-    
-    const envText = await envResponse.text();
-    console.log('[Gemini API] Raw .env content length:', envText.length);
-    const lines = envText.split('\n');
-    const geminiApiKeyLine = lines.find(line => line.trim().startsWith('GEMINI_API_KEY='));
-    const legacyApiKeyLine = lines.find(line => line.trim().startsWith('API_KEY='));
-    const apiKeyLine = geminiApiKeyLine || legacyApiKeyLine;
-
-    if (!apiKeyLine) {
-      throw new Error('GEMINI_API_KEY (or API_KEY) not found in .env');
-    }
-
-    if (geminiApiKeyLine) {
-      apiKey = geminiApiKeyLine.trim().split('GEMINI_API_KEY=')[1].trim();
-    } else {
-      apiKey = legacyApiKeyLine.trim().split('API_KEY=')[1].trim();
-      console.warn('[Gemini API] Using legacy API_KEY from .env. Consider renaming to GEMINI_API_KEY.');
-    }
-    
-    if (!apiKey) {
-      throw new Error('API_KEY is empty');
-    }
-    
-    console.log(`[Gemini API] Using API Key: ...${apiKey.slice(-4)}`);
-    const model = "gemini-2.5-flash";
-    
-    console.log('[Gemini API] Using model:', model);
-    console.log('[Gemini API] Frame data present:', !!frames);
-    console.log('[Gemini API] Number of frames:', frames?.length || 0);
-    console.log('[Gemini API] Video URL present:', !!options.videoUrl);
-    console.log('[Gemini API] Segment count:', options.segments?.length || 0);
-    
-    // Build content parts
-    const parts = [];
-    
-    // Add images if provided
-    if (frames && Array.isArray(frames)) {
-        console.log('[Gemini API] Processing', frames.length, 'frames for AD');
-        frames.forEach((frame, index) => {
-            parts.push({
-                inlineData: {
-                    mimeType: "image/jpeg",
-                    data: frame.frameData
-                }
-            });
-            parts.push({
-                text: `Frame ${index + 1} - Timestamp: ${frame.timestamp}s`
-            });
-        });
-    } else if (frames && typeof frames === 'string') {
-        // Single frame data for VQA
-        console.log('[Gemini API] Processing single frame for VQA');
-        parts.push({
-            inlineData: {
-                mimeType: "image/jpeg",
-                data: frames
-            }
-        });
-    }
-
-    if (options.videoUrl) {
-      console.log('[Gemini API] Adding YouTube URL as fileData part');
-      parts.push({
-        fileData: {
-          mimeType: "video/x-youtube",
-          fileUri: options.videoUrl
-        }
-      });
-    }
-
-    if (Array.isArray(options.segments) && options.segments.length > 0) {
-      parts.push({
-        text: `Segments JSON: ${JSON.stringify(options.segments)}`
-      });
-    }
-    
-    // Add text prompt
-    parts.push({
-      text: prompt
-    });
-    
-    console.log('[Gemini API] Sending request with', parts.length, 'parts');
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: parts
-        }]
-      })
-    });
-
-    console.log('[Gemini API] Response status:', response.status);
-    
-    // Get the response text first
-    const responseText = await response.text();
-    console.log('[Gemini API] Raw response length:', responseText.length);
-    if (responseText.length > 500) {
-      console.log('[Gemini API] Raw response start:', responseText.substring(0, 500));
-    } else {
-      console.log('[Gemini API] Raw response:', responseText);
-    }
-
-    if (!response.ok) {
-      console.error('[Gemini API] Bad response status');
-      const errorMsg = formatGeminiErrorMessage(response.status, response.statusText, responseText);
-      console.error('[Gemini API] Parsed error:', errorMsg);
-      throw new Error(errorMsg);
-    }
-
+// Video URL resolution helper
+function resolveVideoUrlForAdRequest(request, sender) {
+  if (request.videoUrl) return request.videoUrl;
+  if (sender?.tab?.url) {
     try {
-      const data = JSON.parse(responseText);
-      console.log('[Gemini API] Success! Response received');
-      console.log('[Gemini API] Response keys:', Object.keys(data).join(', '));
-      
-      if (data.candidates && data.candidates[0] && data.candidates[0].content) {
-        const text = data.candidates[0].content.parts?.[0]?.text;
-        if (!text) {
-          throw new Error('No text content found in candidate response');
-        }
-        console.log('[Gemini API] Extracted text length:', text.length);
-        return text;
-      } else if (data.error) {
-        throw new Error(`API returned error: ${data.error.message}`);
-      } else {
-        console.error('[Gemini API] Unexpected response format:', data);
-        throw new Error('Unexpected API response format');
-      }
-    } catch (parseError) {
-      console.error('[Gemini API] JSON parse error:', parseError.message);
-      throw new Error(`Failed to parse API response: ${parseError.message}`);
+      const url = new URL(sender.tab.url);
+      const videoId = url.searchParams.get('v');
+      if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
+    } catch (error) {
+      console.warn('Could not extract video ID:', error);
     }
-  } catch (error) {
-    console.error("[Gemini API] Error calling Gemini API:", error.message);
-    throw new Error(`[Gemini API] Error: ${error.message}`);
   }
+  return request.videoUrl || '';
 }
-
-function formatGeminiErrorMessage(status, statusText, responseText) {
-  let parsed = null;
-  try {
-    parsed = JSON.parse(responseText);
-  } catch (parseError) {
-    console.error('[Gemini API] Could not parse error response as JSON');
-    return `API error: ${status} - ${responseText || statusText}`;
-  }
-
-  const apiError = parsed?.error || {};
-  const errorMessage = apiError.message || statusText || 'Unknown API error';
-  const details = Array.isArray(apiError.details) ? apiError.details : [];
-  const errorInfo = details.find(detail => detail?.['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo');
-  const reason = errorInfo?.reason;
-  const service = errorInfo?.metadata?.service;
-  const consumer = errorInfo?.metadata?.consumer;
-
-  if (reason === 'API_KEY_SERVICE_BLOCKED') {
-    return `API error: ${status} - Gemini API key is blocked for ${service || 'generativelanguage.googleapis.com'} (reason: API_KEY_SERVICE_BLOCKED${consumer ? `, ${consumer}` : ''}). Enable the Generative Language API for this project and allow it in your API key restrictions.`;
-  }
-
-  return `API error: ${status} - ${errorMessage}`;
-}
-
-// Firebase Auth Handlers - these need to be handled in content script context
-// since Firebase SDK requires DOM access in extension context
-
-function handleAuthSignup(request, sendResponse) {
-  console.log('[BG] Auth signup request:', request.email);
-  // Send to content script which has Firebase context
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]) {
-      chrome.tabs.sendMessage(
-        tabs[0].id,
-        { type: 'FIREBASE_SIGNUP', email: request.email, password: request.password, role: request.role },
-        (response) => {
-          sendResponse(response);
-        }
-      );
-    }
-  });
-}
-
-function handleAuthLogin(request, sendResponse) {
-  console.log('[BG] Auth login request:', request.email);
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]) {
-      chrome.tabs.sendMessage(
-        tabs[0].id,
-        { type: 'FIREBASE_LOGIN', email: request.email, password: request.password },
-        (response) => {
-          sendResponse(response);
-        }
-      );
-    }
-  });
-}
-
-function handleAuthLogout(sendResponse) {
-  console.log('[BG] Auth logout request');
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]) {
-      chrome.tabs.sendMessage(
-        tabs[0].id,
-        { type: 'FIREBASE_LOGOUT' },
-        (response) => {
-          sendResponse(response);
-        }
-      );
-    }
-  });
-}
-
-function handleAuthCheck(sendResponse) {
-  console.log('[BG] Auth check request');
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]) {
-      chrome.tabs.sendMessage(
-        tabs[0].id,
-        { type: 'FIREBASE_CHECK' },
-        (response) => {
-          sendResponse(response || { user: null });
-        }
-      );
-    }
-  });
-}
-  

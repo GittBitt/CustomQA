@@ -321,12 +321,7 @@
                 // Setup Firebase config and inline API
                 window.firebaseConfig = {
                     apiKey: 'AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A',
-                    authDomain: 'customqa-cf40b.firebaseapp.com',
-                    projectId: 'customqa-cf40b',
-                    storageBucket: 'customqa-cf40b.firebasestorage.app',
-                    messagingSenderId: '44575669634',
-                    appId: '1:44575669634:web:313903337bbba65d3d239b',
-                    measurementId: 'G-GV9DDT0XB1'
+                    projectId: 'customqa-cf40b'
                 };
 
                 // Inline Firebase REST API with persistent auth
@@ -355,16 +350,36 @@
                 };
 
                 const savePersistedAuth = (user, token, refreshToken = refreshToken_FBAuth, tokenExpiresAt = tokenExpiresAt_FBAuth) => {
+                    // Save to localStorage for backward compatibility
                     localStorage.setItem('customqa_auth', JSON.stringify({
                         user,
                         token,
                         refreshToken,
                         tokenExpiresAt
                     }));
+                    
+                    // Also save to Chrome storage for sync with popup/background
+                    try {
+                        chrome.storage.local.set({
+                            customqa_currentUser: user,
+                            customqa_idToken: token,
+                            customqa_refreshToken: refreshToken,
+                            customqa_tokenExpiresAt: tokenExpiresAt
+                        });
+                    } catch (e) {
+                        console.warn('[CustomQA] Error saving to Chrome storage:', e);
+                    }
                 };
 
                 const clearPersistedAuth = () => {
                     localStorage.removeItem('customqa_auth');
+                    
+                    // Also clear Chrome storage
+                    try {
+                        chrome.storage.local.remove(['customqa_currentUser', 'customqa_idToken', 'customqa_refreshToken', 'customqa_tokenExpiresAt']);
+                    } catch (e) {
+                        console.warn('[CustomQA] Error clearing Chrome storage:', e);
+                    }
                 };
 
                 const refreshIdToken = async () => {
@@ -1280,6 +1295,49 @@
 
                 // Load persisted auth on init
                 loadPersistedAuth();
+
+                // Also check Chrome storage for recently logged-in user
+                // (in case user logged in via popup which uses Chrome storage)
+                chrome.storage.local.get(['customqa_currentUser', 'customqa_idToken', 'customqa_refreshToken', 'customqa_tokenExpiresAt'], (items) => {
+                    if (items.customqa_currentUser && items.customqa_idToken && !currentUser_FBAuth) {
+                        console.log('[CustomQA] Syncing auth from Chrome storage...');
+                        currentUser_FBAuth = items.customqa_currentUser;
+                        idToken_FBAuth = items.customqa_idToken;
+                        refreshToken_FBAuth = items.customqa_refreshToken || null;
+                        tokenExpiresAt_FBAuth = Number(items.customqa_tokenExpiresAt || 0);
+                        // Also save to localStorage for persistence
+                        savePersistedAuth(currentUser_FBAuth, idToken_FBAuth, refreshToken_FBAuth, tokenExpiresAt_FBAuth);
+                    }
+                });
+
+                // Listen for auth changes from popup/background
+                chrome.storage.onChanged.addListener((changes, areaName) => {
+                    if (areaName === 'local') {
+                        if (changes.customqa_currentUser || changes.customqa_idToken) {
+                            console.log('[CustomQA] Auth changed in Chrome storage, syncing...');
+                            const newUser = changes.customqa_currentUser?.newValue;
+                            const newToken = changes.customqa_idToken?.newValue;
+                            const newRefreshToken = changes.customqa_refreshToken?.newValue;
+                            const newExpiresAt = changes.customqa_tokenExpiresAt?.newValue;
+                            
+                            if (newUser && newToken) {
+                                currentUser_FBAuth = newUser;
+                                idToken_FBAuth = newToken;
+                                refreshToken_FBAuth = newRefreshToken || null;
+                                tokenExpiresAt_FBAuth = Number(newExpiresAt || 0);
+                                savePersistedAuth(currentUser_FBAuth, idToken_FBAuth, refreshToken_FBAuth, tokenExpiresAt_FBAuth);
+                                console.log('[CustomQA] Auth synced, user:', newUser.email);
+                            } else if (!newUser || !newToken) {
+                                // User logged out
+                                currentUser_FBAuth = null;
+                                idToken_FBAuth = null;
+                                refreshToken_FBAuth = null;
+                                tokenExpiresAt_FBAuth = 0;
+                                console.log('[CustomQA] Auth cleared');
+                            }
+                        }
+                    }
+                });
 
                 console.log('FirebaseAPI ready:', !!window.FirebaseAPI);
 
@@ -3097,7 +3155,9 @@
                                 const adData = JSON.parse(jsonString);
                                 
                                 let descriptions = [];
-                                if (adData.VideoMetadata && adData.VideoMetadata.audio_descriptions) {
+                                if (Array.isArray(adData)) {
+                                    descriptions = adData;
+                                } else if (adData.VideoMetadata && adData.VideoMetadata.audio_descriptions) {
                                     descriptions = adData.VideoMetadata.audio_descriptions;
                                 } else if (adData.audio_descriptions) {
                                     descriptions = adData.audio_descriptions;
@@ -3105,16 +3165,29 @@
                                     descriptions = adData.VideoMetadata.AudioDescriptions;
                                 }
 
+                                if (!Array.isArray(descriptions)) {
+                                    descriptions = [];
+                                }
+
                                 const selectedLength = parseInt(sidebar.querySelector('#length-slider')?.value || 25, 10);
                                 descriptions = normalizeAdDescriptions(descriptions, selectedLength);
                                 console.log('[AD] Normalized description word counts:', descriptions.map(d => d._wordCount));
+
+                                if (descriptions.length === 0) {
+                                    throw new Error('No audio descriptions returned by Gemini.');
+                                }
 
                                 const defaultDescription = 'Scene continues with no major visible change in this section.';
                                 adSchedule = segments.map((segment, index) => {
                                     const modelEntry = descriptions[index] || {};
                                     const modelText = (modelEntry.description || '').trim();
+                                    const modelTimestamp = Number(
+                                        modelEntry.timestamp_in_seconds ??
+                                        ((modelEntry.timestamp_ms ?? 0) / 1000)
+                                    );
                                     return {
-                                        timestamp: segment.start_in_seconds,
+                                        // Prefer model timestamp when valid; fall back to planned segment start.
+                                        timestamp: Number.isFinite(modelTimestamp) ? modelTimestamp : segment.start_in_seconds,
                                         endTimestamp: segment.end_in_seconds,
                                         description: modelText || defaultDescription,
                                         played: false,
@@ -3125,45 +3198,17 @@
 
                                 generateAdButton.textContent = 'Preloading audio...';
 
-                                const preloadPromises = adSchedule.map(ad => {
-                                    return new Promise((resolve, reject) => {
-                                        chrome.runtime.sendMessage({
-                                            type: 'PRELOAD_OPENAI_TTS',
-                                            text: ad.description,
-                                            gender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female'
-                                        }, (response) => {
-                                            if (response && response.success) {
-                                                preloadedAudioMap.set(response.text, response.audioDataUrl);
-                                                resolve();
-                                            } else {
-                                                console.error('OpenAI TTS preload error:', response?.error);
-                                                reject(response?.error);
-                                            }
-                                        });
-                                    });
-                                });
+                                // Render immediately so UI never depends on preload completion.
+                                displayAdBubbles(adSchedule);
 
-                                Promise.all(preloadPromises).then(async () => {
-                                    console.log('All audio preloaded');
-                                    
-                                    // Auto-pause from start if Pause During AD is ON
-                                    const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
-                                    if (pauseAdButton && video) {
-                                        console.log('[CustomQA] Auto-pausing from start for first AD');
-                                        video.currentTime = 0;
-                                        video.pause();
-                                        window.shouldResumeAfterFirstAD = true;
-                                    }
-                                    
-                                    displayAdBubbles(adSchedule);
-                                    
-                                    // Save generated ADs to Firestore if user is logged in
-                                    const user = window.FirebaseAPI?.getCurrentUser();
-                                    if (user && window.DatabaseIntegration) {
+                                // Save generated ADs in background; do not block rendering/playback.
+                                (async () => {
+                                    try {
+                                        const user = window.FirebaseAPI?.getCurrentUser();
+                                        if (!user || !window.DatabaseIntegration) return;
+
                                         const videoUrl = window.location.href;
-                                        // Capture all current user settings as snapshot
                                         const customizations = {
-                                            // AD settings
                                             adVolume: settings.get('volume', 100),
                                             adSpeed: settings.get('speed', 50),
                                             adGender: settings.get('gender', 'female'),
@@ -3174,7 +3219,6 @@
                                             adColorPreference: settings.get('adColor', 'on'),
                                             adNarrationStyle: settings.get('adNarrationStyle', 'objective'),
                                             adPauseDuringAd: settings.get('adPauseDuringAd', false),
-                                            // VQA settings
                                             vqaVolume: settings.get('volume', 100),
                                             vqaSpeed: settings.get('speed', 50),
                                             vqaGender: settings.get('gender', 'female'),
@@ -3184,33 +3228,48 @@
                                             timestamp_in_seconds: ad.timestamp,
                                             description: ad.description
                                         }));
-                                        
+
                                         const saved = await window.DatabaseIntegration.saveGeneratedAD(videoUrl, video.duration, customizations, generatedAds);
                                         if (saved) {
                                             console.log('Generated ADs saved to Firestore');
                                         }
+                                    } catch (saveError) {
+                                        console.error('Error saving generated ADs:', saveError);
                                     }
-                                    
-                                    video.currentTime = 0; // Restart video to apply ADs
-                                    // Wait for seek to complete, then check pause setting
-                                    const handleSeeked = () => {
-                                        video.removeEventListener('seeked', handleSeeked);
-                                        console.log('[AD] Video seeked to start.');
-                                        // Check if Pause During AD is ON
-                                        const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
-                                        if (pauseAdButton) {
-                                            console.log('[AD] Pausing video for generated AD...');
-                                            video.pause();
-                                            window.shouldResumeAfterFirstAD = true;
+                                })();
+
+                                // Restart and begin playback flow immediately.
+                                video.currentTime = 0;
+                                const handleSeeked = () => {
+                                    video.removeEventListener('seeked', handleSeeked);
+                                    console.log('[AD] Video seeked to start.');
+                                    const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
+                                    if (pauseAdButton) {
+                                        console.log('[AD] Pausing video for generated AD...');
+                                        video.pause();
+                                        window.shouldResumeAfterFirstAD = true;
+                                    } else {
+                                        console.log('[AD] Playing video...');
+                                        video.play();
+                                    }
+                                };
+                                video.addEventListener('seeked', handleSeeked);
+
+                                // Best-effort preload in background; never block UX.
+                                const preloadGender = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female';
+                                adSchedule.forEach((ad) => {
+                                    chrome.runtime.sendMessage({
+                                        type: 'PRELOAD_OPENAI_TTS',
+                                        text: ad.description,
+                                        gender: preloadGender,
+                                        speed: settings.get('speed', 50)
+                                    }, (response) => {
+                                        if (response && response.success && response.audioDataUrl) {
+                                            preloadedAudioMap.set(response.text || ad.description, response.audioDataUrl);
                                         } else {
-                                            console.log('[AD] Playing video...');
-                                            video.play();
+                                            console.warn('[AD] Preload failed for one segment:', response?.error || 'Unknown error');
                                         }
-                                    };
-                                    video.addEventListener('seeked', handleSeeked);
-                                }).catch(error => {
-                                    console.error('Error preloading audio:', error);
-                                    alert('Error preloading audio. Please try again.');
+                                    });
                                 });
 
                             } else {
