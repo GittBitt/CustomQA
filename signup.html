@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CustomQA - Sign Up</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .signup-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 420px;
+            padding: 40px;
+        }
+
+        .signup-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .signup-logo {
+            font-size: 32px;
+            margin-bottom: 12px;
+        }
+
+        .signup-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #000;
+            margin-bottom: 8px;
+        }
+
+        .signup-subtitle {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #000;
+            margin-bottom: 6px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-select {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            background: white;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .form-select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .password-requirements {
+            font-size: 12px;
+            color: #666;
+            margin-top: 6px;
+            padding: 8px;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+
+        .requirement-item {
+            margin: 4px 0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .requirement-check {
+            color: #ccc;
+            font-size: 12px;
+        }
+
+        .requirement-check.met {
+            color: #4caf50;
+        }
+
+        .signup-button {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 24px;
+        }
+
+        .signup-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .signup-button:active {
+            transform: translateY(0);
+        }
+
+        .signup-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .signup-error {
+            padding: 12px;
+            background: #ffe6e6;
+            color: #c33;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .signup-error.show {
+            display: block;
+        }
+
+        .signup-success {
+            padding: 12px;
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .signup-success.show {
+            display: block;
+        }
+
+        .login-link {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .login-link a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.2s;
+        }
+
+        .login-link a:hover {
+            color: #764ba2;
+        }
+
+        .form-divider {
+            margin: 24px 0;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+            position: relative;
+        }
+
+        .form-divider::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            width: 100%;
+            height: 1px;
+            background: #eee;
+        }
+
+        .form-divider span {
+            position: relative;
+            background: white;
+            padding: 0 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="signup-container">
+        <div class="signup-header">
+            <div class="signup-logo">✦</div>
+            <h1 class="signup-title">CustomQA</h1>
+            <p class="signup-subtitle">Join the study and get started</p>
+        </div>
+
+        <form id="signup-form">
+            <div class="signup-error" id="signup-error"></div>
+            <div class="signup-success" id="signup-success"></div>
+
+            <div class="form-group">
+                <label class="form-label" for="email">Email Address</label>
+                <input 
+                    type="email" 
+                    id="email" 
+                    class="form-input" 
+                    placeholder="your@email.com" 
+                    required
+                />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="password">Password</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    class="form-input" 
+                    placeholder="Create a strong password" 
+                    required
+                />
+                <div class="password-requirements">
+                    <div class="requirement-item">
+                        <span class="requirement-check" id="check-length">✓</span>
+                        <span>At least 6 characters</span>
+                    </div>
+                    <div class="requirement-item">
+                        <span class="requirement-check" id="check-number">✓</span>
+                        <span>Contains a number</span>
+                    </div>
+                    <div class="requirement-item">
+                        <span class="requirement-check" id="check-letter">✓</span>
+                        <span>Contains a letter</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="confirm-password">Confirm Password</label>
+                <input 
+                    type="password" 
+                    id="confirm-password" 
+                    class="form-input" 
+                    placeholder="Re-enter your password" 
+                    required
+                />
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="role">Study Role</label>
+                <select id="role" class="form-select" required>
+                    <option value="">Select your role...</option>
+                    <option value="experimental_tester">Experimental Tester</option>
+                    <option value="control_tester">Control Tester</option>
+                </select>
+            </div>
+
+            <button type="submit" class="signup-button" id="submit-btn">Create Account</button>
+        </form>
+
+        <div class="login-link">
+            Already have an account? <a href="#" onclick="alert('Navigate to login')">Sign in</a>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('signup-form');
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        const confirmInput = document.getElementById('confirm-password');
+        const roleSelect = document.getElementById('role');
+        const submitBtn = document.getElementById('submit-btn');
+        const errorDiv = document.getElementById('signup-error');
+        const successDiv = document.getElementById('signup-success');
+
+        // Password requirement checkers
+        const checkLength = document.getElementById('check-length');
+        const checkNumber = document.getElementById('check-number');
+        const checkLetter = document.getElementById('check-letter');
+
+        passwordInput.addEventListener('input', () => {
+            const pwd = passwordInput.value;
+
+            // Check length (6+ chars)
+            if (pwd.length >= 6) {
+                checkLength.classList.add('met');
+            } else {
+                checkLength.classList.remove('met');
+            }
+
+            // Check number
+            if (/\d/.test(pwd)) {
+                checkNumber.classList.add('met');
+            } else {
+                checkNumber.classList.remove('met');
+            }
+
+            // Check letter
+            if (/[a-zA-Z]/.test(pwd)) {
+                checkLetter.classList.add('met');
+            } else {
+                checkLetter.classList.remove('met');
+            }
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const email = emailInput.value.trim();
+            const password = passwordInput.value;
+            const confirm = confirmInput.value;
+            const role = roleSelect.value;
+
+            // Clear messages
+            errorDiv.classList.remove('show');
+            successDiv.classList.remove('show');
+
+            // Validation
+            if (!email || !password || !confirm || !role) {
+                showError('All fields are required');
+                return;
+            }
+
+            if (password !== confirm) {
+                showError('Passwords do not match');
+                return;
+            }
+
+            if (password.length < 6) {
+                showError('Password must be at least 6 characters');
+                return;
+            }
+
+            if (!/\d/.test(password) || !/[a-zA-Z]/.test(password)) {
+                showError('Password must contain both letters and numbers');
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creating account...';
+
+            try {
+                // Firebase config
+                const FIREBASE_API_KEY = 'AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A';
+                const PROJECT_ID = 'customqa-cf40b';
+
+                console.log('Starting signup for:', email);
+
+                // Step 1: Sign up with Firebase Auth
+                const signupResponse = await fetch(
+                    `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE_API_KEY}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email,
+                            password,
+                            returnSecureToken: true
+                        })
+                    }
+                );
+
+                console.log('Auth response status:', signupResponse.status);
+
+                if (!signupResponse.ok) {
+                    const errorData = await signupResponse.json();
+                    console.error('Auth error details:', errorData);
+                    throw new Error(errorData.error?.message || 'Signup failed');
+                }
+
+                const signupData = await signupResponse.json();
+                const userId = signupData.localId;
+                const idToken = signupData.idToken;
+                
+                console.log('Auth successful, userId:', userId);
+
+                // Step 2: Create user document in Firestore
+                await new Promise(resolve => setTimeout(resolve, 500)); // Wait a moment for auth to settle
+
+                const timestamp = new Date().toISOString();
+                const firestoreBody = {
+                    fields: {
+                        email: { stringValue: email },
+                        role: { stringValue: role },
+                        createdAt: { timestampValue: timestamp },
+                        updatedAt: { timestampValue: timestamp }
+                    }
+                };
+
+                console.log('Firestore payload:', JSON.stringify(firestoreBody, null, 2));
+
+                const firestoreResponse = await fetch(
+                    `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${userId}?key=${FIREBASE_API_KEY}`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(firestoreBody)
+                    }
+                );
+
+                console.log('Firestore response status:', firestoreResponse.status);
+
+                if (!firestoreResponse.ok) {
+                    const errorData = await firestoreResponse.json();
+                    console.error('Firestore error details:', errorData);
+                    throw new Error('Failed to create user profile in database: ' + (errorData.error?.message || JSON.stringify(errorData)));
+                }
+
+                const firestoreData = await firestoreResponse.json();
+                console.log('User created in Firestore:', firestoreData);
+
+                // Save session data
+                sessionStorage.setItem('customqa_user_id', userId);
+                sessionStorage.setItem('customqa_id_token', idToken);
+                sessionStorage.setItem('customqa_email', email);
+                sessionStorage.setItem('customqa_role', role);
+
+                showSuccess('Account created successfully! Redirecting to login...');
+                setTimeout(() => {
+                    window.location.href = 'login.html';
+                }, 2000);
+            } catch (error) {
+                console.error('Signup error:', error);
+                showError(error.message || 'Failed to create account. Check browser console (F12) for details.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Create Account';
+            }
+        });
+
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
+            window.scrollTo(0, 0);
+        }
+
+        function showSuccess(message) {
+            successDiv.textContent = message;
+            successDiv.classList.add('show');
+        }
+    </script>
+
+    <script>
+      // Firebase config - get your values from Firebase Console > Project Settings
+      window.firebaseConfig = {
+        apiKey: "AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A",
+        projectId: "customqa-cf40b"
+      };
+    </script>
+</body>
+</html>

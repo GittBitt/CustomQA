@@ -2,113 +2,221 @@
     <div class="sidebar-title-group">
         <span class="sidebar-star">✦</span>
         <div class="sidebar-title">
-            <span class="sidebar-title-main">Title</span>
+            <span class="sidebar-title-main">CustomQA</span>
             <span class="sidebar-title-sub">Sidebar Plugin</span>
         </div>
     </div>
     <div class="sidebar-header-actions">
-        <div class="vqa-badge">
-            VQA <span>❓</span>
-        </div>
-        <div class="settings-icon">⚙️</div>
+            <div class="button-group">
+                <button class="vqa-badge" aria-label="Visual Question Answer">INFO <svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 0 24 24" width="18" fill="white"><path d="M0 0h24v24H0z" fill="none"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg></button>
+                <button class="auth-avatar-icon" id="auth-avatar-btn" aria-label="Account" title="Login/Signup"><svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"></path></svg></button>
+                <button class="settings-icon" aria-label="Settings"><svg style="width: 1em; height: 1em;vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg"><path d="M658.285714 512q0-60.571429-42.857143-103.428571t-103.428571-42.857143-103.428571 42.857143-42.857143 103.428571 42.857143 103.428571 103.428571 42.857143 103.428571-42.857143 42.857143-103.428571zm292.571429-62.285714l0 126.857143q0 6.857143-4.571429 13.142857t-11.428571 7.428571l-105.714286 16q-10.857143 30.857143-22.285714 52 20 28.571429 61.142857 78.857143 5.714286 6.857143 5.714286 14.285714t-5.142857 13.142857q-15.428571 21.142857-56.571429 61.714286t-53.714286 40.571429q-6.857143 0-14.857143-5.142857l-78.857143-61.714286q-25.142857 13.142857-52 21.714286-9.142857 77.714286-16.571429 106.285714-4 16-20.571429 16l-126.857143 0q-8 0-14-4.857143t-6.571429-12.285714l-16-105.142857q-28-9.142857-51.428571-21.142857l-80.571429 61.142857q-5.714286 5.142857-14.285714 5.142857-8 0-14.285714-6.285714-72-65.142857-94.285714-96-4-5.714286-4-13.142857 0-6.857143 4.571429-13.142857 8.571429-12 29.142857-38t30.857143-40.285714q-15.428571-28.571429-23.428571-56.571429l-104.571429-15.428571q-7.428571-1.142857-12-7.142857t-4.571429-13.428571l0-126.857143q0-6.857143 4.571429-13.142857t10.857143-7.428571l106.285714-16q8-26.285714 22.285714-52.571429-22.857143-32.571429-61.142857-78.857143-5.714286-6.857143-5.714286-13.714286 0-5.714286 5.142857-13.142857 14.857143-20.571429 56.285714-61.428571t54-40.857143q7.428571 0 14.857143 5.714286l78.857143 61.142857q25.142857-13.142857 52-21.714286 9.142857-77.714286 16.571429-106.285714 4-16 20.571429-16l126.857143 0q8 0 14 4.857143t6.571429 12.285714l16 105.142857q28 9.142857 51.428571 21.142857l81.142857-61.142857q5.142857-5.142857 13.714286-5.142857 7.428571 0 14.285714 5.714286 73.714286 68 94.285714 97.142857 4 4.571429 4 12.571429 0 6.857143-4.571429 13.142857-8.571429 12-29.142857 38t-30.857143 40.285714q14.857143 28.571429 23.428571 56l104.571429 16q7.428571 1.142857 12 7.142857t4.571429 13.428571z"></path></svg></button>
+            </div>
     </div>
 </div>
 
-<div class="section">
-    <div class="section-title">Presentation Customization</div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Voice</div>
-        <div class="button-group">
-            <button class="pill-button">HUMAN</button>
-            <button class="pill-button active">SYNTHESIZER</button>
+<div class="tab-container" role="tablist">
+    <button class="tab-button active" data-tab="audio-descriptions" aria-label="Audio Descriptions Tab" role="tab" aria-selected="true">Audio Descriptions</button>
+    <button class="tab-button" data-tab="vqa" aria-label="Visual Question Answer Tab" role="tab" aria-selected="false">Visual Question Answer</button>
+</div>
+
+<div class="tab-content" id="audio-descriptions-tab" role="tabpanel">
+    <div class="section">
+        <div class="section-title">AUDIO DESCRIPTIONS</div>
+        <div class="chatbox" id="ad-display-box">
+            <div class="chat-messages" id="ad-messages" tabindex="0" aria-label="Audio Descriptions"></div>
         </div>
     </div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Gender</div>
-        <div class="button-group">
-            <button class="pill-button">FEMALE</button>
-            <button class="pill-button active">MALE</button>
-            <button class="pill-button">ANDROGYNOUS</button>
+    <button class="save-button" id="generate-ad-button" aria-label="Generate Audio Description">GENERATE AD</button>
+    <button class="save-button" id="restore-settings-button" aria-label="Restore Settings from Recent Video" style="background-color: #9e9e9e; margin-top: 8px;">RESTORE SETTINGS</button>
+    <div class="divider"></div>
+    <div class="section">
+        <div class="section-title">PRESENTATION CUSTOMIZATION</div>
+
+        <div class="slider-container">
+            <div class="slider-label">Volume:</div>
+            <div class="slider-wrapper">
+                <svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-1hl1abi" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02M5 9v6h4l5 5V4L9 9z"></path></svg>
+                <input type="range" min="0" max="200" value="100" class="slider" id="ad-volume-slider" aria-label="Audio Description Volume">
+                <svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-1hl1abi" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77"></path></svg>
+            </div>
+        </div>
+
+        <div class="slider-container">
+            <div class="slider-label">Speed:</div>
+            <div class="slider-wrapper">
+                <svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-1hl1abi" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M13.05 9.79 10 7.5v9l3.05-2.29L16 12zm0 0L10 7.5v9l3.05-2.29L16 12zm0 0L10 7.5v9l3.05-2.29L16 12zM11 4.07V2.05c-2.01.2-3.84 1-5.32 2.21L7.1 5.69c1.11-.86 2.44-1.44 3.9-1.62M5.69 7.1 4.26 5.68C3.05 7.16 2.25 8.99 2.05 11h2.02c.18-1.46.76-2.79 1.62-3.9M4.07 13H2.05c.2 2.01 1 3.84 2.21 5.32l1.43-1.43c-.86-1.1-1.44-2.43-1.62-3.89m1.61 6.74C7.16 20.95 9 21.75 11 21.95v-2.02c-1.46-.18-2.79-.76-3.9-1.62zM22 12c0 5.16-3.92 9.42-8.95 9.95v-2.02C16.97 19.41 20 16.05 20 12s-3.03-7.41-6.95-7.93V2.05C18.08 2.58 22 6.84 22 12"></path></svg>
+                <input type="range" min="0" max="100" value="50" class="slider" id="ad-speed-slider" aria-label="Audio Description Speed">
+                <svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-1hl1abi" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="m20.38 8.57-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83"></path></svg>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Voice</div>
+            <div class="button-group">
+                <button class="pill-button active" data-voice="human" aria-label="Human Voice" aria-pressed="true">HUMAN</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Gender</div>
+            <div class="button-group" data-selection-type="single">
+                <button class="pill-button active" data-gender="female" aria-label="Female Voice" aria-pressed="true">FEMALE</button>
+                <button class="pill-button" data-gender="male" aria-label="Male Voice" aria-pressed="false">MALE</button>
+                <button class="pill-button" data-gender="androgynous" aria-label="Androgynous Voice" aria-pressed="false">ANDROGYNOUS</button>
+            </div>
         </div>
     </div>
+
+    <div class="divider"></div>
     
-    <div class="slider-container">
-        <div class="slider-label">Speed:</div>
-        <input type="range" min="0" max="100" value="50" class="slider">
+    <div class="section">
+        <div class="section-title">CONTENT CUSTOMIZATION</div>
+        
+        <div class="slider-container">
+            <div class="slider-label">Length: <span id="length-value">25</span> words</div>
+            <input type="range" min="0" max="100" value="25" class="slider" id="length-slider" aria-label="Audio Description Word Length">
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Frequency:</div>
+            <div class="button-group" data-selection-type="single">
+                <button class="pill-button" data-frequency="rarely" aria-label="Rarely (generates an audio description every 1 minute)" aria-pressed="false">RARELY</button>
+                <button class="pill-button active" data-frequency="sometimes" aria-label="Sometimes (generates an audio description every 30 seconds)" aria-pressed="true">SOMETIMES</button>
+                <button class="pill-button" data-frequency="often" aria-label="Often (generates an audio description every 15 seconds)" aria-pressed="false">OFTEN</button>
+                <button class="pill-button" data-frequency="very-often" aria-label="Very Often (generates an audio description every 8 seconds)" aria-pressed="false">VERY OFTEN</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Emphasis:</div>
+            <div class="button-group" data-selection-type="single">
+                <button class="pill-button active" data-emphasis="balanced" aria-label="Balanced Emphasis" aria-pressed="true">BALANCED</button>
+                <button class="pill-button" data-emphasis="character" aria-label="Character Emphasis" aria-pressed="false">CHARACTER</button>
+                <button class="pill-button" data-emphasis="environment" aria-label="Environment Emphasis" aria-pressed="false">ENVIRONMENT</button>
+                <button class="pill-button" data-emphasis="instructional" aria-label="Instructional Emphasis" aria-pressed="false">INSTRUCTIONAL</button>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Color Descriptions:</div>
+            <div class="button-group" data-selection-type="single">
+                <button class="pill-button active" data-color="on" aria-label="Color Descriptions On" aria-pressed="true">ON</button>
+                <button class="pill-button" data-color="off" aria-label="Color Descriptions Off" aria-pressed="false">OFF</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Narration Style:</div>
+            <div class="button-group" data-selection-type="single">
+                <button class="pill-button active" data-narration="objective" aria-label="Objective Narration" aria-pressed="true">OBJECTIVE</button>
+                <button class="pill-button" data-narration="subjective" aria-label="Subjective Narration" aria-pressed="false">SUBJECTIVE</button>
+            </div>
+        </div>
     </div>
+
+    <div class="divider"></div>
     
-    <div class="slider-container">
-        <div class="slider-label">Volume:</div>
-        <input type="range" min="0" max="100" value="50" class="slider">
+    <div class="section">
+        <div class="section-title">CUSTOMIZATION SETUPS</div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Audio Description:</div>
+            <div class="button-group">
+                <button class="pill-button active" aria-label="Audio Description On" aria-pressed="true">ON</button>
+                <button class="pill-button" aria-label="Audio Description Off" aria-pressed="false">OFF</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Pause During AD:</div>
+            <div class="button-group" id="pause-ad-group" data-selection-type="single">
+                <button class="pill-button active" data-action="pause-on" aria-label="Pause During Audio Description On" aria-pressed="true">ON</button>
+                <button class="pill-button" data-action="pause-off" aria-label="Pause During Audio Description Off" aria-pressed="false">OFF</button>
+            </div>
+        </div>
     </div>
 </div>
 
-<div class="divider"></div>
+<div class="tab-content" id="vqa-tab" style="display: none;" role="tabpanel">
 
-<div class="section">
-    <div class="section-title">CUSTOMIZATION SETUPS</div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Audio Description:</div>
-        <div class="button-group">
-            <button class="pill-button active">ON</button>
-            <button class="pill-button">OFF</button>
-        </div>
+    <div id="time-window-slider-container" class="slider-container">
+        <div class="slider-label">Time Window: <span id="time-window-value">25</span>s</div>
+        <input type="range" min="0" max="100" value="25" class="slider" id="time-window-slider" aria-label="Time Window">
     </div>
+
+    <div class="vqa-sub-tab-content" id="chat-tab" style="display: block;">
+        <div class="chatbox">
+            <div class="chat-messages" tabindex="0" aria-label="Visual Question and Answer Chat"></div>
+            <div class="chat-input-container">
+                <textarea class="chat-input" placeholder="Type your message..."></textarea>
+                <button id="chat-mic-button" style="background: none; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center;" aria-label="Microphone">
+                    <svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24">
+                        <path d="M0 0h24v24H0z" fill="none"/>
+                        <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                    </svg>
+                </button>
+                <button id="chat-speaker-button" style="background: none; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center;" aria-label="Speaker">
+                    <svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24">
+                        <path d="M0 0h24v24H0z" fill="none"/>
+                        <path d="M3 9v6h4l5 5V4L7 9zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <button id="vqa-send-button" class="save-button" style="margin-top: 16px; padding: 12px 20px;" aria-label="Ask question at 0:00">Ask question at 0:00</button>
+        <button id="restore-settings-button" class="save-button" aria-label="Restore Settings from Recent Video" style="background-color: #9e9e9e; margin-top: 8px;">RESTORE SETTINGS</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="section">
+        <div class="section-title">PRESENTATION CUSTOMIZATION</div>
+
+        <div class="slider-container">
+            <div class="slider-label">Volume:</div>
+            <div class="slider-wrapper">
+                <svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-1hl1abi" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02M5 9v6h4l5 5V4L9 9z"></path></svg>
+                <input type="range" min="0" max="200" value="100" class="slider" id="vqa-volume-slider" aria-label="Visual Question Answer Volume">
+                <svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-1hl1abi" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77"></path></svg>
+            </div>
+        </div>
+        
+        <div class="slider-container">
+            <div class="slider-label">Speed:</div>
+            <div class="slider-wrapper">
+                <svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-1hl1abi" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M13.05 9.79 10 7.5v9l3.05-2.29L16 12zm0 0L10 7.5v9l3.05-2.29L16 12zm0 0L10 7.5v9l3.05-2.29L16 12zM11 4.07V2.05c-2.01.2-3.84 1-5.32 2.21L7.1 5.69c1.11-.86 2.44-1.44 3.9-1.62M5.69 7.1 4.26 5.68C3.05 7.16 2.25 8.99 2.05 11h2.02c.18-1.46.76-2.79 1.62-3.9M4.07 13H2.05c.2 2.01 1 3.84 2.21 5.32l1.43-1.43c-.86-1.1-1.44-2.43-1.62-3.89m1.61 6.74C7.16 20.95 9 21.75 11 21.95v-2.02c-1.46-.18-2.79-.76-3.9-1.62zM22 12c0 5.16-3.92 9.42-8.95 9.95v-2.02C16.97 19.41 20 16.05 20 12s-3.03-7.41-6.95-7.93V2.05C18.08 2.58 22 6.84 22 12"></path></svg>
+                <input type="range" min="0" max="100" value="50" class="slider" id="vqa-speed-slider" aria-label="Visual Question Answer Speed">
+                <svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-1hl1abi" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="m20.38 8.57-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83"></path></svg>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Voice</div>
+            <div class="button-group" id="vqa-voice-group">
+                <button class="pill-button active" data-voice="human" aria-label="Human Voice" aria-pressed="true">HUMAN</button>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <div class="subsection-title">Gender</div>
+            <div class="button-group" id="vqa-gender-group" data-selection-type="single">
+                <button class="pill-button" data-gender="female" aria-label="Female Voice" aria-pressed="false">FEMALE</button>
+                <button class="pill-button" data-gender="male" aria-label="Male Voice">MALE</button>
+                <button class="pill-button" data-gender="androgynous" aria-label="Androgynous Voice">ANDROGYNOUS</button>
+            </div>
+        </div>
+        
+    </div>
+
+    <div class="divider"></div>
     
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Pause During AD:</div>
-        <div class="button-group">
-            <button class="pill-button">ON</button>
-            <button class="pill-button active">OFF</button>
+    <div class="section">
+        <div class="section-title">CONTENT CUSTOMIZATION</div>
+        
+        <div class="slider-container">
+            <div class="slider-label">Length: <span id="vqa-length-value">25</span> words</div>
+            <input type="range" min="0" max="100" value="25" class="slider" id="vqa-length-slider" aria-label="Visual Question Answer Word Length">
         </div>
     </div>
 </div>
-
-<div class="divider"></div>
-
-<div class="section">
-    <div class="section-title">CONTENT CUSTOMIZATION</div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Length:</div>
-        <div class="button-group">
-            <button class="pill-button">SUCCINCT</button>
-            <button class="pill-button active">VERBOSE</button>
-            <button class="pill-button">VERY VERBOSE</button>
-        </div>
-    </div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Frequency:</div>
-        <div class="button-group">
-            <button class="pill-button">RARELY</button>
-            <button class="pill-button active">SOMETIMES</button>
-            <button class="pill-button">OFTEN</button>
-            <button class="pill-button">VERY</button>
-        </div>
-    </div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Emphasis (multiple choice):</div>
-        <div class="button-group">
-            <button class="pill-button">ACTIVITY</button>
-            <button class="pill-button active">PERSON</button>
-            <button class="pill-button">OBJECT</button>
-            <button class="pill-button">SETTING</button>
-        </div>
-    </div>
-    
-    <div style="margin-bottom: 16px;">
-        <div class="subsection-title">Narration Style (multiple choice):</div>
-        <div class="button-group">
-            <button class="pill-button">STYLE 1</button>
-            <button class="pill-button">STYLE 2</button>
-            <button class="pill-button">STYLE 3</button>
-        </div>
-    </div>
-</div>
-
-<button class="save-button">SAVE CHANGES</button>

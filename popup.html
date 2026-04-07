@@ -6,6 +6,47 @@
 </head>
 <body>
     <h1>CustomQA</h1>
+    <div class="container">
+        <div class="section" role="group" aria-labelledby="welcome-heading" tabindex="0">
+            <h2 id="welcome-heading">Welcome to CustomQA</h2>
+            <p class="section-description" role="group" aria-labelledby="welcome-description" tabindex="0">This extension enhances your YouTube viewing experience with AI-powered Audio Descriptions and Visual Question Answering.</p>
+        </div>
+
+        <div class="section" role="group" aria-labelledby="ad-heading" tabindex="0">
+            <h2 id="ad-heading">Audio Descriptions (AD)</h2>
+            <p class="section-description" role="group" aria-labelledby="ad-description" tabindex="0">The AD feature provides automatic audio descriptions for the video you are watching.</p>
+            <ol role="group" aria-label="Audio Description Steps" tabindex="0">
+                <li tabindex="0">Open the "Audio Descriptions" tab in the sidebar.</li>
+                <li tabindex="0">Customize the description style using the available options (Length, Frequency, Emphasis, etc.).</li>
+                <li tabindex="0">Click the "GENERATE AD" button. The extension will capture frames and generate descriptions.</li>
+                <li tabindex="0">Once generated, the descriptions will appear in the display box and play automatically as the video progresses.</li>
+                <li tabindex="0">You can manually play any description by clicking the speaker icon next to it.</li>
+            </ol>
+        </div>
+
+        <div class="section" role="group" aria-labelledby="vqa-heading" tabindex="0">
+            <h2 id="vqa-heading">Visual Question Answering (VQA)</h2>
+            <p class="section-description" role="group" aria-labelledby="vqa-description" tabindex="0">The VQA feature allows you to ask questions about the video content.</p>
+            <ol role="group" aria-label="Visual Question Answering Steps" tabindex="0">
+                <li tabindex="0">Open the "Visual Question Answer" tab in the sidebar.</li>
+                <li tabindex="0">Type your question into the chat input box at the bottom.</li>
+                <li tabindex="0">The extension will capture frames around the current timestamp and use them to answer your question.</li>
+                <li tabindex="0">The answer will appear in the chatbox and be read aloud.</li>
+            </ol>
+        </div>
+
+        <div class="section" role="group" aria-labelledby="customization-heading" tabindex="0">
+            <h2 id="customization-heading">Customization</h2>
+            <p class="section-description" role="group" aria-labelledby="customization-description" tabindex="0">Both AD and VQA features can be customized to your liking. Use the various sliders and buttons in the sidebar to adjust settings like voice gender, speed, and content style.</p>
+        </div>
+    </div>
+    <script>
+      // Firebase config - get your values from Firebase Console > Project Settings
+      window.firebaseConfig = {
+        apiKey: "AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A",
+        projectId: "customqa-cf40b"
+      };
+    </script>
     <script src="popup.js"></script>
 </body>
 </html>

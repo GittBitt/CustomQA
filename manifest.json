@@ -6,10 +6,18 @@
     "permissions": [
         "storage",
         "tabs",
-        "scripting"
+        "scripting",
+        "tts"
     ],
     "host_permissions": [
-        "https://*.youtube.com/*"
+        "https://*.youtube.com/*",
+        "https://generativelanguage.googleapis.com/*",
+        "https://api.openai.com/*",
+        "https://www.googleapis.com/*",
+        "https://*.firebaseio.com/*",
+        "https://securetoken.googleapis.com/*",
+        "https://identitytoolkit.googleapis.com/*",
+        "https://firestore.googleapis.com/*"
     ],
     "background": {
         "service_worker": "background.js"
@@ -23,23 +31,24 @@
     "web_accessible_resources": [
         {
             "resources": [
-                "assets/bookmark.png", 
-                "assets/play.png", 
-                "assets/delete.png",
-                "assets/save.png",
                 "popup.css",
-                "popup.js"
+                "popup.html",
+                "popup.js",
+                "sidebar.html",
+                "sidebar.css",
+                "signup.html",
+                "login.html",
+                "firebase-rest-api.js",
+                "auth-ui.js",
+                "database-integration.js",
+                "assets/activation.mp3"
             ],
             "matches": ["https://*.youtube.com/*"]
         }
     ],
+    
     "action": {
         "default_popup": "popup.html",
-        "default_title": "CustomQA Extension",
-        "default_icon": {
-            "16": "assets/ext-icon.png",
-            "24": "assets/ext-icon.png",
-            "32": "assets/ext-icon.png"
-        }
+        "default_title": "CustomQA Extension"
     }
 }
