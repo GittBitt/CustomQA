@@ -242,7 +242,7 @@ If you have questions about this Privacy Policy or our privacy practices, please
 
 **Email:** [nphuynh2@asu.edu](mailto:nphuynh2@asu.edu)  
 **Mailing Address:**  
-CustomQA  
+ASU
 [Your Company Address]  
 [City, State/Province, Postal Code]  
 [Country]
