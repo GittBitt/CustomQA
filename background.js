@@ -41,22 +41,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     return true; // Keep the message channel open for async response
   } else if (request.type === 'CALL_GEMINI_FOR_AD') {
+    const resolvedVideoUrl = resolveVideoUrlForAdRequest(request, sender);
     console.log('[BG] Processing CALL_GEMINI_FOR_AD');
-    console.log('[BG] Frames received:', request.frames?.length);
+    console.log('[BG] Video URL received:', request.videoUrl);
+    console.log('[BG] Video URL from sender tab:', sender?.tab?.url);
+    console.log('[BG] Resolved video URL:', resolvedVideoUrl);
+    console.log('[BG] Segments received:', request.segments?.length);
     
     (async () => {
       try {
-        const prompt = build_ad_prompt(request.customizations);
-        // Pass frames with their timestamps to Gemini
-        const framesForGemini = request.frames && Array.isArray(request.frames) 
-          ? request.frames.map(f => ({
-              frameData: f.frameData,
-              timestamp: f.timestamp
-            }))
-          : [];
+        const prompt = build_ad_prompt(
+          request.customizations,
+          resolvedVideoUrl,
+          request.videoDuration,
+          request.segments
+        );
         
-        console.log('[BG] Calling Gemini with', framesForGemini.length, 'frames');
-        const result = await callGeminiAPI(prompt, framesForGemini);
+        console.log('[BG] Calling Gemini for AD with URL + segment metadata');
+        const result = await callGeminiAPI(prompt, null, {
+          videoUrl: resolvedVideoUrl,
+          videoDuration: request.videoDuration,
+          segments: request.segments,
+          taskType: 'ad'
+        });
         console.log('[BG] Sending success response', result?.substring?.(0, 100));
         sendResponse({ success: true, text: result });
       } catch (error) {
@@ -121,6 +128,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 });
+
+function resolveVideoUrlForAdRequest(request, sender) {
+  const senderTabUrl = sender?.tab?.url || '';
+  const requestVideoUrl = request?.videoUrl || '';
+
+  // Prefer the real tab URL so URL detection is automatic and does not depend on payload.
+  const candidates = [senderTabUrl, requestVideoUrl].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (candidate.includes('youtube.com/watch') || candidate.includes('youtu.be/')) {
+      return candidate;
+    }
+  }
+
+  // Fallback for non-YouTube pages where a regular video element may exist.
+  return senderTabUrl || requestVideoUrl || '';
+}
 
 async function getOpenAI_TTS_API(text, gender) {
   let apiKey = '';
@@ -199,10 +223,21 @@ async function getOpenAI_TTS_API(text, gender) {
   }
 }
 
-function build_ad_prompt(customizations) {
+function build_ad_prompt(customizations, videoUrl, videoDuration, segments) {
+  const segmentTimeline = Array.isArray(segments) ? segments : [];
+  const targetWords = Number.isFinite(Number(customizations?.length)) ? Number(customizations.length) : 25;
+  const maxWords = targetWords + 5;
+  const minWords = Math.max(5, targetWords - 5);
+  const frequencyToHumanText = {
+    'rarely': 'Every 60 seconds',
+    'sometimes': 'Every 30 seconds',
+    'often': 'Every 15 seconds',
+    'very-often': 'Every 8 seconds'
+  };
+
     let base_prompt = `
     You are an AI designed to assist in creating high-quality and contextually rich descriptions for videos, aimed at enhancing accessibility for blind and low-vision (BLV) users.
-    The input consists of a series of video frames, each with a timestamp. Based on these frames, craft audio descriptions that are highly personalised, based on guidance from the BLV.
+  The input consists of a video URL and predefined time sections. Craft audio descriptions that are highly personalised, based on guidance from the BLV.
     You must follow all the given instructions. You should avoid any prefatory language, such as \`the video shows\`. Follow the General and Customised guidelines shared by the user. You should prioritise the customised guidelines while adhering to the general Guidelines:
 `;
 
@@ -267,10 +302,27 @@ GENERAL AUDIO DESCRIPTION GUIDELINES:
 
     base_prompt += `
 CUSTOM GUIDELINES SPECIFIED BY USER:
-- Description Length: Target approximately ${customizations.length} words per description segment. This is a soft limit; you can go 5 words over or under if it improves the description.
-- Scene Changes: Analyze the video frames to identify when the scene transitions (different location, camera angle, or significant visual context change). Include the exact timestamp of each scene change within your description (e.g., "At 1:05, the scene shifts to..." or "Scene changes at 0:35 to show..."). This helps BLV users track major transitions in the video.
-- Emphasis: ${emphasis_guidelines[customizations.emphasis] || emphasis_guidelines['balanced']}
-- Style: ${subjectiveness_guidelines[customizations.subjectiveness] || subjectiveness_guidelines['objective']}
+  - Description Length: Target approximately ${targetWords} words per description segment.
+  - Hard Length Bounds: Each description MUST be between ${minWords} and ${maxWords} words.
+  - Frequency: ${frequencyToHumanText[customizations.frequency] || 'Every 30 seconds'} (${customizations.intervalSeconds || 30} second section size).
+  - Scene Changes: Identify when the scene transitions (different location, camera angle, or significant visual context change). Include the exact timestamp of each scene change within the description (e.g., "At 1:05, the scene shifts to...").
+  - Emphasis: ${emphasis_guidelines[customizations.emphasis] || emphasis_guidelines['balanced']}
+  - Style: ${subjectiveness_guidelines[customizations.subjectiveness] || subjectiveness_guidelines['objective']}
+
+  PRESENTATION CUSTOMIZATION SELECTED BY USER:
+  - Voice type preference: ${customizations.presentation?.voice || 'human'}
+  - Voice gender preference: ${customizations.presentation?.gender || 'female'}
+  - Playback speed preference: ${customizations.presentation?.speed ?? 50}
+  - Playback volume preference: ${customizations.presentation?.volume ?? 100}
+
+  CONTENT CUSTOMIZATION SELECTED BY USER:
+  - Emphasis setting: ${customizations.content?.emphasis || customizations.emphasis || 'balanced'}
+  - Narration style setting: ${customizations.content?.narrationStyle || customizations.subjectiveness || 'objective'}
+  - Color descriptions setting: ${customizations.content?.colorDescriptions || customizations.colorPreference || 'on'}
+
+  CUSTOMIZATION SETUPS SELECTED BY USER:
+  - Audio Description enabled: ${customizations.setup?.adEnabled === false ? 'off' : 'on'}
+  - Pause during AD playback: ${customizations.setup?.pauseDuringAd ? 'on' : 'off'}
 `;
 
     if (customizations.colorPreference === 'off') {
@@ -282,22 +334,33 @@ CUSTOM GUIDELINES SPECIFIED BY USER:
 ${guidelines}
 
 TASK INSTRUCTIONS:
-You are provided with a series of video frames, each with a timestamp. Your task is to generate comprehensive audio descriptions for each time segment spanning from one frame timestamp to the next.
+  You are provided with a video URL and a list of fixed time segments. Your task is to generate comprehensive audio descriptions for each segment from its start timestamp to its end timestamp.
+CUSTOMIZATION PRIORITY RULE:
+  User customizations are mandatory and override default stylistic tendencies. Do not ignore length, style, emphasis, or color settings.
+
+HARD OUTPUT RULES:
+  1. Output valid JSON only (no markdown, no prose outside JSON).
+  2. Every description MUST be between ${minWords} and ${maxWords} words.
+  3. Keep each segment concise. If many events occur, summarize and include only the most important scene changes with timestamps.
+  4. Do not prepend bracket labels like "[0:00 - 0:30]" unless naturally part of a sentence.
+
 Your approach should be:
-1. Analyze all frames provided to understand the complete visual context and identify when all scene changes occur.
-2. For each timestamp in the sequence (e.g., 0:00, 0:30, 1:00, etc.), generate a description covering the entire time period from that timestamp up to the next frame timestamp.
-3. Within each description, explicitly identify and describe ALL scene changes that occur during that time segment, including the exact timestamp of each transition (e.g., "From 0:00 to 0:30: At 0:15, the scene transitions to..." or "0:00-0:30 covers: Initial scene until 0:20 when camera pans left to...").
-4. Ensure each description provides a comprehensive narrative of the full visual progression from start to end of that time segment, not just individual moments.
-5. For multi-scene time segments, list scene changes in chronological order with exact timestamps (e.g., "At 1:05, scene changes to..." "At 1:45, camera transitions to...").
-6. Adhere to the user's customization settings for emphasis, style, and word count.
-7. Ensure descriptions are presented in order of the timestamps.
-8. Return descriptions as valid JSON matching the VideoMetadata schema.
+  1. Use the provided video URL to determine visual content and context of the full video timeline.
+  2. For each segment in the provided timeline (e.g., 0:00-0:30 for "sometimes"), generate one description that summarizes the entire section.
+  3. Include silent periods when relevant so each section reflects what happens across the full interval, not only active moments.
+  4. Within each section description, explicitly include scene changes and their exact timestamps in chronological order.
+  5. Ensure each description is comprehensive for the full segment start-to-end progression.
+  6. Adhere to the user's selected presentation, content, and setup customizations.
+  7. Ensure descriptions are presented in chronological order by segment start timestamp.
+  8. Return descriptions as valid JSON matching the VideoMetadata schema.
 
 IMPORTANT: Your response must be valid JSON matching the VideoMetadata schema with the structure:
 {
   "VideoMetadata": {
     "audio_descriptions": [
       {
+        "timestamp_start": <number>,
+        "timestamp_end": <number>,
         "timestamp_in_seconds": <number>,
         "description": "<audio description text for the time range starting at this timestamp>"
       }
@@ -305,13 +368,25 @@ IMPORTANT: Your response must be valid JSON matching the VideoMetadata schema wi
   }
 }
 
-Begin analyzing the frames now:
+For each segment entry:
+- timestamp_start MUST equal the segment start time.
+- timestamp_end MUST equal the segment end time.
+- timestamp_in_seconds MUST be the same value as timestamp_start.
+
+VIDEO CONTEXT:
+- Video URL: ${videoUrl || 'unknown'}
+- Video duration (seconds): ${typeof videoDuration === 'number' ? videoDuration : 'unknown'}
+
+SEGMENTS TO DESCRIBE (one JSON entry per segment, use segment start time for timestamp_in_seconds):
+${segmentTimeline.length > 0 ? segmentTimeline.map((segment, index) => `${index + 1}. ${segment.start_label || segment.start_in_seconds}s to ${segment.end_label || segment.end_in_seconds}s (start=${segment.start_in_seconds}, end=${segment.end_in_seconds})`).join('\n') : '- No segments provided'}
+
+Begin analyzing the video timeline now:
 `;
 
     return base_prompt;
 }
 
-async function callGeminiAPI(prompt, frames) {
+async function callGeminiAPI(prompt, frames, options = {}) {
   let apiKey = '';
   try {
     console.log('[Gemini API] Fetching API key...');
@@ -337,11 +412,13 @@ async function callGeminiAPI(prompt, frames) {
     }
     
     console.log(`[Gemini API] Using API Key: ...${apiKey.slice(-4)}`);
-    const model = "gemini-2.5-flash"; // Fast model
+    const model = "gemini-2.5-flash";
     
     console.log('[Gemini API] Using model:', model);
     console.log('[Gemini API] Frame data present:', !!frames);
     console.log('[Gemini API] Number of frames:', frames?.length || 0);
+    console.log('[Gemini API] Video URL present:', !!options.videoUrl);
+    console.log('[Gemini API] Segment count:', options.segments?.length || 0);
     
     // Build content parts
     const parts = [];
@@ -369,6 +446,22 @@ async function callGeminiAPI(prompt, frames) {
                 data: frames
             }
         });
+    }
+
+    if (options.videoUrl) {
+      console.log('[Gemini API] Adding YouTube URL as fileData part');
+      parts.push({
+        fileData: {
+          mimeType: "video/x-youtube",
+          fileUri: options.videoUrl
+        }
+      });
+    }
+
+    if (Array.isArray(options.segments) && options.segments.length > 0) {
+      parts.push({
+        text: `Segments JSON: ${JSON.stringify(options.segments)}`
+      });
     }
     
     // Add text prompt
@@ -419,7 +512,10 @@ async function callGeminiAPI(prompt, frames) {
       console.log('[Gemini API] Response keys:', Object.keys(data).join(', '));
       
       if (data.candidates && data.candidates[0] && data.candidates[0].content) {
-        const text = data.candidates[0].content.parts[0].text;
+        const text = data.candidates[0].content.parts?.[0]?.text;
+        if (!text) {
+          throw new Error('No text content found in candidate response');
+        }
         console.log('[Gemini API] Extracted text length:', text.length);
         return text;
       } else if (data.error) {
