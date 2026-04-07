@@ -414,23 +414,15 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
     
     console.log(`[Gemini API] Called by user ${req.user.uid}`);
     console.log('[Gemini] Request mode:', isAdRequest ? 'AD(JSON expected)' : 'General(text expected)');
-    console.log('[Gemini] Text provided:', text ? text.substring(0, 50) + '...' : 'EMPTY');
-    console.log('[Gemini] Frames:', frames ? frames.length : 0);
     if (videoUrl) {
       console.log('[Gemini] Video URL provided:', videoUrl);
     }
     
-    // Validate: must have text
-    if (!text || typeof text !== 'string' || text.trim().length === 0) {
-      return res.status(400).json({ success: false, error: 'Missing or empty text prompt' });
-    }
-    
-    const textOnlyParts = [{ text }];
-    const urlGroundedParts = [...textOnlyParts];
+    const parts = [];
 
-    // Try URL grounding first when possible; fall back to text-only if API rejects arguments.
+    // Restore URL-grounded video context for Gemini when client passes a YouTube URL.
     if (videoUrl && /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(videoUrl)) {
-      urlGroundedParts.unshift({
+      parts.push({
         fileData: {
           mimeType: 'video/x-youtube',
           fileUri: videoUrl
@@ -438,87 +430,55 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       });
     }
 
-    // Validate parts — Gemini requires at least one part
-    if (!urlGroundedParts || urlGroundedParts.length === 0) {
-      console.error('[Gemini] Error: Empty parts array (no text or frames)');
-      return res.status(400).json({ success: false, error: 'No content to send to Gemini API' });
+    if (text) parts.push({ text });
+    
+    if (frames && frames.length > 0) {
+      for (const frame of frames) {
+        // Check if frame is a string (base64 image) or object (data like segments)
+        if (typeof frame === 'string') {
+          // It's a base64-encoded image
+          parts.push({
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: frame.replace('data:image/jpeg;base64,', '')
+            }
+          });
+        } else if (typeof frame === 'object') {
+          // It's a data object (like segments) - include as text
+          parts.push({ text: JSON.stringify(frame) });
+        }
+      }
     }
-
-    console.log('[Gemini] Sending request with', urlGroundedParts.length, 'parts');
-    console.log('[Gemini] Parts detail:', urlGroundedParts.map((p, i) => {
-      if (p.text) return `Part ${i}: text (${p.text.length} chars)`;
-      if (p.fileData) return `Part ${i}: fileData (${p.fileData.mimeType})`;
-      if (p.inlineData) return `Part ${i}: inlineData (${p.inlineData.mimeType})`;
-      return `Part ${i}: unknown`;
-    }));
     
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GOOGLE_GEMINI_API_KEY}`;
     console.log('[Gemini] Request URL:', geminiUrl.split('?')[0] + '?key=***');
     
-    const buildRequestBody = (parts, useJsonMime) => ({
-      contents: [{ parts }],
-      generationConfig: {
-        temperature: isAdRequest ? 0.4 : 0.7,
-        topP: 0.95,
-        maxOutputTokens: isAdRequest ? 4096 : 1024,
-        ...(useJsonMime && isAdRequest ? { responseMimeType: 'application/json' } : {})
-      }
-    });
-
-    let requestBody = buildRequestBody(urlGroundedParts, true);
-    
-    // Log the full request for debugging
-    const requestJson = JSON.stringify(requestBody);
-    console.log('[Gemini] Request body length:', requestJson.length, 'bytes');
-    console.log('[Gemini] Full request body:', requestJson.substring(0, 500));
-    if (requestJson.length > 500) {
-      console.log('[Gemini] ... (truncated) ...');
-      console.log('[Gemini] ... end of request:', requestJson.substring(requestJson.length - 200));
-    }
-    
-    let response = await fetch(
+    const response = await fetch(
       geminiUrl,
       {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Referer': 'http://localhost:3000',
+          'User-Agent': 'CustomQA-Backend/1.0'
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: {
+            temperature: isAdRequest ? 0.4 : 0.7,
+            topP: 0.95,
+            maxOutputTokens: isAdRequest ? 4096 : 1024,
+            ...(isAdRequest ? { responseMimeType: 'application/json' } : {})
+          }
+        })
       }
     );
 
     console.log('[Gemini] Response status:', response.status);
 
     if (!response.ok) {
-      const firstErrorBody = await response.text();
-      const isInvalidArgument = response.status === 400 && firstErrorBody.includes('INVALID_ARGUMENT');
-
-      if (isInvalidArgument) {
-        console.warn('[Gemini] INVALID_ARGUMENT on URL-grounded request; retrying with text-only payload.');
-        requestBody = buildRequestBody(textOnlyParts, false);
-        response = await fetch(geminiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(requestBody)
-        });
-        console.log('[Gemini] Retry response status:', response.status);
-      } else {
-        console.error('[Gemini] Error response (full):', firstErrorBody);
-        throw new Error(`Gemini API error: ${response.status} - ${firstErrorBody}`);
-      }
-    }
-
-    if (!response.ok) {
       const errorData = await response.text();
-      console.error('[Gemini] Error response (full):', errorData);
-      try {
-        const parsed = JSON.parse(errorData);
-        console.error('[Gemini] Parsed error:', JSON.stringify(parsed, null, 2));
-      } catch (e) {
-        console.error('[Gemini] Could not parse error as JSON');
-      }
+      console.error('[Gemini] Error response:', errorData);
       throw new Error(`Gemini API error: ${response.status} - ${errorData}`);
     }
 
