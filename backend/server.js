@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { OpenAI } from 'openai';
-import fetch from 'node-fetch';
+import fetch, { FormData, Blob } from 'node-fetch';
 
 dotenv.config();
 
@@ -32,7 +32,8 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json());
+// Microphone audio is sent as base64 data URLs; increase body limit to avoid 413 payload errors.
+app.use(express.json({ limit: '25mb' }));
 
 // ==================== MIDDLEWARE ====================
 
@@ -527,17 +528,40 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
 // Call Whisper
 app.post('/api/call-whisper', verifyToken, async (req, res) => {
   try {
-    const { audioBlob } = req.body;
+    const { audioBlob, settings } = req.body;
     
     console.log(`[Whisper API] Called by user ${req.user.uid}`);
     
-    const audioBuffer = Buffer.from(audioBlob, 'base64');
+    if (!audioBlob || typeof audioBlob !== 'string') {
+      return res.status(400).json({ success: false, error: 'Missing or invalid audioBlob payload' });
+    }
+
+    const commaIndex = typeof audioBlob === 'string' ? audioBlob.indexOf(',') : -1;
+    const dataUrlHeader = commaIndex > -1 ? audioBlob.slice(0, commaIndex) : '';
+    const rawMimeType = dataUrlHeader.startsWith('data:')
+      ? dataUrlHeader.slice(5).split(';')[0]
+      : 'audio/webm';
+    const detectedMimeType = (rawMimeType || 'audio/webm').toLowerCase();
+    const base64Audio = commaIndex > -1 ? audioBlob.slice(commaIndex + 1) : audioBlob;
+    const audioBuffer = Buffer.from(base64Audio, 'base64');
+
+    const extensionByMime = {
+      'audio/webm': 'webm',
+      'audio/ogg': 'ogg',
+      'audio/wav': 'wav',
+      'audio/wave': 'wav',
+      'audio/x-wav': 'wav',
+      'audio/mpeg': 'mp3',
+      'audio/mp4': 'm4a'
+    };
+    const mimeForLookup = detectedMimeType.split(';')[0].trim();
+    const fileExtension = extensionByMime[mimeForLookup] || 'webm';
     
     // Create FormData manually for node-fetch
     const formData = new FormData();
-    formData.append('file', new Blob([audioBuffer], { type: 'audio/mp3' }), 'audio.mp3');
+    formData.append('file', new Blob([audioBuffer], { type: mimeForLookup }), `audio.${fileExtension}`);
     formData.append('model', 'whisper-1');
-    formData.append('language', 'en');
+    formData.append('language', settings?.language || 'en');
 
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
@@ -547,7 +571,10 @@ app.post('/api/call-whisper', verifyToken, async (req, res) => {
       body: formData
     });
 
-    if (!response.ok) throw new Error(`Whisper API error: ${response.status}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Whisper API error: ${response.status} - ${errorText}`);
+    }
 
     const data = await response.json();
     res.json({ success: true, text: data.text });
@@ -564,7 +591,16 @@ app.post('/api/call-tts', verifyToken, async (req, res) => {
     
     console.log(`[TTS API] Called by user ${req.user.uid}`);
     
-    const normalizedSpeed = Math.max(0.25, Math.min(4.0, (speed || 1) / 100));
+    // Normalize UI slider speed (0-100) to OpenAI speed (0.25-4.0) with 50 => 1.0.
+    let normalizedSpeed = 1.0;
+    if (typeof speed === 'number') {
+      if (speed <= 50) {
+        normalizedSpeed = 0.25 + (speed / 50) * (1.0 - 0.25);
+      } else {
+        normalizedSpeed = 1.0 + ((speed - 50) / 50) * (4.0 - 1.0);
+      }
+      normalizedSpeed = Math.max(0.25, Math.min(4.0, normalizedSpeed));
+    }
     
     const response = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
@@ -573,7 +609,7 @@ app.post('/api/call-tts', verifyToken, async (req, res) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'tts-1-hd',
+        model: 'tts-1',
         input: text,
         voice: voice || 'nova',
         speed: normalizedSpeed

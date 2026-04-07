@@ -129,7 +129,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return request.voice;
     }
     const gender = (request.gender || '').toLowerCase();
-    return gender === 'male' ? 'onyx' : 'nova';
+    if (gender === 'male') return 'echo';
+    if (gender === 'androgynous') return 'alloy';
+    return 'nova';
   };
   
   (async () => {
@@ -153,57 +155,37 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         
       } else if (request.type === 'CALL_GEMINI_FOR_AD') {
         console.log('[BG] Processing CALL_GEMINI_FOR_AD');
-        
-        // Format segments for the prompt
-        const segmentsList = (request.segments || []).map(seg => {
-          if (typeof seg === 'number') {
-            return { timestamp_in_seconds: seg };
-          }
-          return seg;
-        });
-        
-        // Construct prompt for AD generation
-        const prompt = `You are an expert audio description writer. Generate audio descriptions for specific time segments of a YouTube video.
-
-Video URL: ${request.videoUrl}
-Total Duration: ${request.videoDuration} seconds
-
-Settings:
-- Length: ${request.customizations?.adLength || 25} seconds per description
-- Frequency: ${request.customizations?.adFrequency || 'sometimes'}
-- Emphasis: ${request.customizations?.adEmphasis || 'balanced'}
-- Narration Style: ${request.customizations?.adNarrationStyle || 'objective'}
-- Color Preference: ${request.customizations?.adColorPreference || 'on'}
-
-Timestamps to describe:
-${JSON.stringify(segmentsList, null, 2)}
-
-Return a JSON array with objects containing:
-- timestamp_in_seconds: the time marker (number)
-- description: a compelling audio description appropriate for the settings above (string)
-
-Example format:
-[
-  {"timestamp_in_seconds": 10, "description": "A person walks through a door..."},
-  {"timestamp_in_seconds": 25, "description": "The scene changes to..."}
-]`;
+        const resolvedVideoUrl = resolveVideoUrlForAdRequest(request, sender);
+        const prompt = build_ad_prompt(
+          request.customizations || {},
+          resolvedVideoUrl,
+          request.videoDuration,
+          request.segments || []
+        );
 
         result = await callBackend('/api/call-gemini', {
           text: prompt,
           frames: request.segments || [],
           options: {
-            videoUrl: request.videoUrl,
-            segments: request.segments
+            videoUrl: resolvedVideoUrl,
+            videoDuration: request.videoDuration,
+            segments: request.segments,
+            taskType: 'ad'
           }
         }, idToken);
         sendResponse({ success: true, text: result.result });
         
       } else if (request.type === 'CALL_GEMINI_VQA') {
         console.log('[BG] Processing CALL_GEMINI_VQA');
+        const resolvedVideoUrl = resolveVideoUrlForAdRequest(request, sender);
         result = await callBackend('/api/call-gemini', {
           text: request.prompt,
           frames: request.frameData ? [request.frameData] : [],
-          options: { videoUrl: request.videoUrl }
+          options: {
+            videoUrl: resolvedVideoUrl,
+            timestamp: request.timestamp,
+            taskType: 'vqa'
+          }
         }, idToken);
         sendResponse({ success: true, text: result.result });
         
@@ -219,7 +201,8 @@ Example format:
       } else if (request.type === 'CALL_WHISPER') {
         console.log('[BG] Processing CALL_WHISPER');
         result = await callBackend('/api/call-whisper', {
-          audioBlob: request.audioBlob
+          audioBlob: request.audioBlob,
+          settings: request.settings || {}
         }, idToken);
         sendResponse({ success: true, text: result.text });
         
@@ -249,6 +232,10 @@ Example format:
           speed: request.speed
         }, idToken);
         sendResponse({ success: true, text: request.text, audioDataUrl: result.audioUrl });
+
+      } else if (request.type === 'OPEN_POPUP') {
+        chrome.action.openPopup();
+        sendResponse({ success: true });
 
       } else {
         sendResponse({ success: false, error: `Unsupported message type: ${request.type}` });
@@ -282,9 +269,16 @@ async function callBackend(endpoint, body, idToken) {
   console.log('[Backend] Response status:', response.status);
 
   if (!response.ok) {
-    const error = await response.text();
-    console.error(`[Backend] Error ${response.status}:`, error);
-    throw new Error(`Backend error: ${response.status}`);
+    const errorText = await response.text();
+    console.error(`[Backend] Error ${response.status}:`, errorText);
+    let backendMessage = errorText;
+    try {
+      const parsed = JSON.parse(errorText);
+      backendMessage = parsed?.error || parsed?.message || errorText;
+    } catch {
+      // Keep raw text when backend didn't return JSON.
+    }
+    throw new Error(`Backend error: ${response.status} - ${backendMessage}`);
   }
 
   const data = await response.json();
@@ -382,6 +376,8 @@ CUSTOM GUIDELINES SPECIFIED BY USER:
   - Description Length: Target approximately ${targetWords} words per description segment.
   - Hard Length Bounds: Each description MUST be between ${minWords} and ${maxWords} words.
   - Frequency: ${frequencyToHumanText[customizations.adFrequency] || frequencyToHumanText[customizations.frequency] || 'Every 30 seconds'} (${customizations.intervalSeconds || 30} second section size).
+  - Scene Changes: When scenes change within a segment, include explicit timestamps in the sentence (e.g., "At 1:05, ...").
+  - Silent Sections: If there is little/no visible change in part of a segment, explicitly mention that quiet/silent interval and its timestamp range.
   - Emphasis: ${emphasis_guidelines[customizations.adEmphasis || customizations.emphasis] || emphasis_guidelines['balanced']}
   - Style: ${subjectiveness_guidelines[customizations.adNarrationStyle || customizations.subjectiveness] || subjectiveness_guidelines['objective']}
 
@@ -393,6 +389,8 @@ ${guidelines}
 
 TASK INSTRUCTIONS:
   You are provided with a video URL and a list of fixed time segments. Your task is to generate comprehensive audio descriptions for each segment.
+  For each segment, describe the ENTIRE interval from segment start to segment end, not isolated moments.
+  Make sure each description reflects progression through the section (beginning -> middle -> end), including scene transitions and any notable quiet/no-change spans.
 
 CUSTOMIZATION PRIORITY RULE:
   User customizations are mandatory and override default stylistic tendencies. Do not ignore length, style, emphasis, or color settings.
@@ -401,20 +399,28 @@ HARD OUTPUT RULES:
   1. Output valid JSON only (no markdown, no prose outside JSON).
   2. Every description MUST be between ${minWords} and ${maxWords} words.
   3. Keep each segment concise. If many events occur, summarize and include only the most important scene changes.
-  4. Do not prepend bracket labels like "[0:00 - 0:30]" unless naturally part of a sentence.
+  4. Include timestamped scene-change cues and mention silent/no-change spans when present.
 
 IMPORTANT: Your response must be valid JSON as an array of objects with this structure:
 [
   {
+    "timestamp_start": <number>,
+    "timestamp_end": <number>,
     "timestamp_in_seconds": <number>,
     "description": "<audio description text>"
   }
 ]
 
-SEGMENTS TO DESCRIBE (timestamps in seconds):
+For each segment:
+- timestamp_start MUST equal the segment start.
+- timestamp_end MUST equal the segment end.
+- timestamp_in_seconds MUST equal timestamp_start.
+
+SEGMENTS TO DESCRIBE (start/end timestamps in seconds):
 ${segmentTimeline.length > 0 ? segmentTimeline.map((seg, i) => {
-  const ts = typeof seg === 'number' ? seg : (seg.timestamp_in_seconds || seg.start_in_seconds || 0);
-  return `${i + 1}. Timestamp: ${ts}s`;
+  const start = typeof seg === 'number' ? seg : (seg.timestamp_in_seconds || seg.start_in_seconds || 0);
+  const end = typeof seg === 'number' ? seg : (seg.end_in_seconds || start);
+  return `${i + 1}. Start: ${start}s, End: ${end}s`;
 }).join('\n') : '- No segments provided'}
 
 Begin analyzing the video now and return only valid JSON:

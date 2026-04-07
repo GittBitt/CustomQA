@@ -124,6 +124,25 @@
 
     // Initialize settings manager globally
     const settings = new SettingsManager();
+
+    const syncSettingsManagerFromPersisted = (persisted = {}) => {
+        if (!persisted || typeof persisted !== 'object') return;
+        if (persisted.adVolume !== undefined) settings.set('volume', Number(persisted.adVolume));
+        if (persisted.vqaVolume !== undefined) settings.set('volume', Number(persisted.vqaVolume));
+        if (persisted.adSpeed !== undefined) settings.set('speed', Number(persisted.adSpeed));
+        if (persisted.vqaSpeed !== undefined) settings.set('speed', Number(persisted.vqaSpeed));
+        if (persisted.adGender) settings.set('gender', persisted.adGender);
+        if (persisted.vqaGender) settings.set('gender', persisted.vqaGender);
+        if (persisted.adVoice) settings.set('voice', persisted.adVoice);
+        if (persisted.vqaVoice) settings.set('voice', persisted.vqaVoice);
+        if (persisted.adLength !== undefined) settings.set('adLength', Number(persisted.adLength));
+        if (persisted.vqaLength !== undefined) settings.set('vqaLength', Number(persisted.vqaLength));
+        if (persisted.adFrequency) settings.set('adFrequency', persisted.adFrequency);
+        if (persisted.adEmphasis) settings.set('adEmphasis', persisted.adEmphasis);
+        if (persisted.adColorPreference) settings.set('adColor', persisted.adColorPreference);
+        if (persisted.adNarrationStyle) settings.set('adNarrationStyle', persisted.adNarrationStyle);
+        if (persisted.adPauseDuringAd !== undefined) settings.set('adPauseDuringAd', !!persisted.adPauseDuringAd);
+    };
     
     // ======================================================
     // Debounce utility to prevent rate limiting on rapid slider changes
@@ -194,6 +213,37 @@
             // Only check for Skip Ad button which definitively indicates an ad is playing
             const skipAdButton = document.querySelector('.ytp-ad-skip-button');
             return skipAdButton && !skipAdButton.style.display?.includes('none') && skipAdButton.offsetParent !== null;
+        };
+
+        const isAudioDescriptionEnabled = () => {
+            const sidebarRoot = document.getElementById('custom-qa-sidebar');
+            if (!sidebarRoot) return true;
+
+            const allButtonGroups = sidebarRoot.querySelectorAll('.button-group');
+            let adToggleGroup = null;
+
+            allButtonGroups.forEach(group => {
+                const label = group.parentElement?.querySelector('.subsection-title');
+                if (label && label.textContent.includes('Audio Description')) {
+                    adToggleGroup = group;
+                }
+            });
+
+            if (!adToggleGroup) return true;
+            const onButton = Array.from(adToggleGroup.querySelectorAll('.pill-button')).find(b => b.textContent.trim() === 'ON');
+            return !!onButton?.classList.contains('active');
+        };
+
+        const getYoutubeVideoId = (url) => {
+            try {
+                const u = new URL(url || window.location.href);
+                if (u.hostname.includes('youtu.be')) {
+                    return u.pathname.replace('/', '');
+                }
+                return u.searchParams.get('v') || '';
+            } catch {
+                return '';
+            }
         };
 
         const playAudioFromDataUrl = async (dataUrl, buttonElement, onendedCallback = null, delayMs = 0) => {
@@ -695,10 +745,12 @@
                         if (!(await ensureValidIdToken())) return false;
                         try {
                             const docPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}`;
+                            const existingSettings = await this.loadSettings(userId) || {};
+                            const mergedSettings = { ...existingSettings, ...(settings || {}) };
                             
                             // Get current user info (email, role) from currentUser_FBAuth
-                            const userEmail = currentUser_FBAuth?.email || settings.email || '';
-                            const userRole = currentUser_FBAuth?.role || settings.role || 'user';
+                            const userEmail = currentUser_FBAuth?.email || mergedSettings.email || '';
+                            const userRole = currentUser_FBAuth?.role || mergedSettings.role || 'user';
                             
                             // Build updateMask to include all fields: user info, AD settings, VQA settings, and timestamps
                             const maskParams = new URLSearchParams();
@@ -723,24 +775,24 @@
                                             email: { stringValue: userEmail },
                                             role: { stringValue: userRole },
                                             // AD presentation customization
-                                            adVolume: { integerValue: parseInt(settings.adVolume || 100) },
-                                            adSpeed: { integerValue: parseInt(settings.adSpeed || 50) },
-                                            adGender: { stringValue: settings.adGender || 'female' },
-                                            adVoice: { stringValue: settings.adVoice || 'human' },
+                                            adVolume: { integerValue: parseInt(mergedSettings.adVolume || 100) },
+                                            adSpeed: { integerValue: parseInt(mergedSettings.adSpeed || 50) },
+                                            adGender: { stringValue: mergedSettings.adGender || 'female' },
+                                            adVoice: { stringValue: mergedSettings.adVoice || 'human' },
                                             // AD content customization
-                                            adLength: { integerValue: parseInt(settings.adLength || 25) },
-                                            adFrequency: { stringValue: settings.adFrequency || 'sometimes' },
-                                            adEmphasis: { stringValue: settings.adEmphasis || 'balanced' },
-                                            adColorPreference: { stringValue: settings.adColorPreference || 'on' },
-                                            adNarrationStyle: { stringValue: settings.adNarrationStyle || 'objective' },
+                                            adLength: { integerValue: parseInt(mergedSettings.adLength || 25) },
+                                            adFrequency: { stringValue: mergedSettings.adFrequency || 'sometimes' },
+                                            adEmphasis: { stringValue: mergedSettings.adEmphasis || 'balanced' },
+                                            adColorPreference: { stringValue: mergedSettings.adColorPreference || 'on' },
+                                            adNarrationStyle: { stringValue: mergedSettings.adNarrationStyle || 'objective' },
                                             // AD customization setup
-                                            adPauseDuringAd: { booleanValue: settings.adPauseDuringAd ?? true },
+                                            adPauseDuringAd: { booleanValue: mergedSettings.adPauseDuringAd ?? true },
                                             // VQA presentation customization
-                                            vqaVolume: { integerValue: parseInt(settings.vqaVolume || 100) },
-                                            vqaSpeed: { integerValue: parseInt(settings.vqaSpeed || 50) },
-                                            vqaGender: { stringValue: settings.vqaGender || 'female' },
+                                            vqaVolume: { integerValue: parseInt(mergedSettings.vqaVolume || 100) },
+                                            vqaSpeed: { integerValue: parseInt(mergedSettings.vqaSpeed || 50) },
+                                            vqaGender: { stringValue: mergedSettings.vqaGender || 'female' },
                                             // VQA content customization
-                                            vqaLength: { integerValue: parseInt(settings.vqaLength || 25) },
+                                            vqaLength: { integerValue: parseInt(mergedSettings.vqaLength || 25) },
                                             // Timestamps
                                             updatedAt: { timestampValue: new Date().toISOString() }
                                         }
@@ -1618,9 +1670,10 @@
                 let hasExistingVQA = false;
                 
                 if (user && window.DatabaseIntegration) {
-                    const settings = await window.DatabaseIntegration.loadUserSettings();
-                    if (settings) {
-                        window.DatabaseIntegration.restoreSettingsToUI(sidebar, settings);
+                    const userSettings = await window.DatabaseIntegration.loadUserSettings();
+                    if (userSettings) {
+                        window.DatabaseIntegration.restoreSettingsToUI(sidebar, userSettings);
+                        syncSettingsManagerFromPersisted(userSettings);
                     }
 
                     // Set up real-time role listener
@@ -1691,10 +1744,8 @@
                             }
                             console.log('[CustomQA] Displaying', previousAD.generatedAds.length, 'AD(s)');
                             
-                            // Restore settings that were used when this AD was generated
-                            if (previousAD.customizations) {
-                                window.DatabaseIntegration.restoreSettingsToUI(sidebar, previousAD.customizations);
-                            }
+                            // Keep global user settings persistent across videos.
+                            // Do not overwrite current UI with per-video AD snapshot customizations.
                             
                             // Display the ADs with full UI (speaker buttons, etc)
                             const adMessages = sidebar.querySelector('#ad-messages');
@@ -1725,7 +1776,6 @@
                                 adMessages.appendChild(metadataBadge);
                                 
                                 const descriptions = previousAD.generatedAds;
-                                const gender = previousAD.customizations?.adGender || 'female';
                                 
                                 descriptions.forEach((desc, index) => {
                                     const messageContainer = document.createElement('div');
@@ -1820,7 +1870,7 @@
                                         chrome.runtime.sendMessage({
                                             type: 'CALL_OPENAI_TTS',
                                             text: textToSpeak,
-                                            gender: gender,
+                                            gender: settings.get('gender', 'female'),
                                             speed: settings.get('speed', 50)
                                         }, (ttsResponse) => {
                                             if (ttsResponse && ttsResponse.success) {
@@ -2217,11 +2267,14 @@
                         settings.set('adNarrationStyle', narration);
                         settings.set('adPauseDuringAd', pauseDuringAd);
 
-                        // For database (backwards compatibility)
+                        // For database (shared presentation stays synced across AD and VQA)
                         dbSettings.adVolume = volume;
                         dbSettings.adSpeed = speed;
                         dbSettings.adGender = gender;
                         dbSettings.adVoice = voice;
+                        dbSettings.vqaVolume = volume;
+                        dbSettings.vqaSpeed = speed;
+                        dbSettings.vqaGender = gender;
                         dbSettings.adLength = adLength;
                         dbSettings.adFrequency = frequency;
                         dbSettings.adEmphasis = emphasis;
@@ -2248,10 +2301,14 @@
                         settings.set('gender', gender);
                         settings.set('vqaLength', vqaLength);
 
-                        // For database (backwards compatibility)
+                        // For database (shared presentation stays synced across AD and VQA)
                         dbSettings.vqaVolume = volume;
                         dbSettings.vqaSpeed = speed;
                         dbSettings.vqaGender = gender;
+                        dbSettings.adVolume = volume;
+                        dbSettings.adSpeed = speed;
+                        dbSettings.adGender = gender;
+                        dbSettings.adVoice = settings.get('voice', 'human');
                         dbSettings.vqaLength = vqaLength;
                     }
                     
@@ -2272,12 +2329,12 @@
                         console.log('[CustomQA] Attempting to save settings:', { isADTab, settings });
                         if (isADTab) {
                             const result = await window.DatabaseIntegration?.saveADSettings(settings);
-                            if (!result?.success) {
+                            if (!result) {
                                 console.error('[CustomQA] Failed to save AD settings:', result);
                             }
                         } else {
                             const result = await window.DatabaseIntegration?.saveVQASettings(settings);
-                            if (!result?.success) {
+                            if (!result) {
                                 console.error('[CustomQA] Failed to save VQA settings:', result);
                             }
                         }
@@ -2674,9 +2731,13 @@
                         
                         // Save voice setting
                         if (button.dataset.voice) {
-                            settings.set('voice', button.dataset.voice);
-                            // Save voice changes to database
                             const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                            const otherTab = sidebar.querySelector('.tab-content[style*="display: none"]');
+                            syncPresentationSettings(activeTab, otherTab);
+                            settings.set('voice', button.dataset.voice);
+                            clearAudioCache();
+                            preloadAllVisibleAudio();
+                            // Save voice changes to database
                             if (activeTab) {
                                 saveAllSettings(activeTab);
                             }
@@ -2750,8 +2811,23 @@
                 let isListeningChatMicButton = false;
                 let mediaRecorder = null;
                 let audioChunks = [];
+                let micAutoStopTimer = null;
                 const chatMicButton = sidebar.querySelector('#chat-mic-button');
                 const activationSound = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
+                const playActivationCue = (pitchedDown = false) => {
+                    try {
+                        const cue = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
+                        if (pitchedDown) {
+                            cue.playbackRate = 0.72;
+                            cue.preservesPitch = false;
+                            cue.mozPreservesPitch = false;
+                            cue.webkitPreservesPitch = false;
+                        }
+                        cue.play();
+                    } catch (error) {
+                        console.error('Error playing activation cue:', error);
+                    }
+                };
                 
                 if (!chatMicButton) {
                     console.warn('[CustomQA] Chat mic button not found');
@@ -2759,14 +2835,15 @@
                     chatMicButton.addEventListener('click', async () => {
                     if (isListeningChatMicButton) {
                         // Stop recording
-                        mediaRecorder.stop();
+                        if (micAutoStopTimer) {
+                            clearTimeout(micAutoStopTimer);
+                            micAutoStopTimer = null;
+                        }
+                        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                            mediaRecorder.stop();
+                        }
                         isListeningChatMicButton = false;
                         chatMicButton.classList.remove('listening');
-                        try {
-                            activationSound.play();
-                        } catch (error) {
-                            console.error('Error playing activation sound:', error);
-                        }
                     } else {
                         // Start recording
                         try {
@@ -2779,14 +2856,22 @@
                             };
                             
                             mediaRecorder.onstop = async () => {
+                                if (micAutoStopTimer) {
+                                    clearTimeout(micAutoStopTimer);
+                                    micAutoStopTimer = null;
+                                }
+                                // When mic stops listening, play a pitched-down cue.
+                                playActivationCue(true);
+
                                 try {
-                                    activationSound.play();
+                                    stream.getTracks().forEach(track => track.stop());
                                 } catch (error) {
-                                    console.error('Error playing activation sound:', error);
+                                    console.warn('[CustomQA] Failed to stop mic stream tracks:', error);
                                 }
                                 
-                                // Create audio blob from chunks
-                                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                                // Create audio blob using the recorder's native mime type.
+                                const recordedMimeType = mediaRecorder?.mimeType || audioChunks?.[0]?.type || 'audio/webm';
+                                const audioBlob = new Blob(audioChunks, { type: recordedMimeType });
                                 
                                 // Get Whisper settings from SettingsManager
                                 const whisperSettings = settings.getWhisperSettings();
@@ -2849,6 +2934,14 @@
                             }
                             
                             mediaRecorder.start();
+                            // Auto-stop listening after 5 seconds.
+                            micAutoStopTimer = setTimeout(() => {
+                                if (isListeningChatMicButton && mediaRecorder && mediaRecorder.state !== 'inactive') {
+                                    mediaRecorder.stop();
+                                    isListeningChatMicButton = false;
+                                    chatMicButton.classList.remove('listening');
+                                }
+                            }, 5000);
                             isListeningChatMicButton = true;
                             chatMicButton.classList.add('listening');
                             try {
@@ -3238,8 +3331,35 @@
                                     }
                                 })();
 
-                                // Restart and begin playback flow immediately.
-                                video.currentTime = 0;
+                                // Preload TTS before playback to reduce first-play delays.
+                                const preloadGender = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female';
+                                const preloadPromises = adSchedule.map((ad) => new Promise((resolve) => {
+                                    chrome.runtime.sendMessage({
+                                        type: 'PRELOAD_OPENAI_TTS',
+                                        text: ad.description,
+                                        gender: preloadGender,
+                                        speed: settings.get('speed', 50)
+                                    }, (response) => {
+                                        if (response && response.success && response.audioDataUrl) {
+                                            const key = response.text || ad.description;
+                                            preloadedAudioMap.set(key, response.audioDataUrl);
+                                            const matchingButtons = sidebar.querySelectorAll('button[data-text]');
+                                            matchingButtons.forEach((btn) => {
+                                                if (btn.getAttribute('data-text') === key) {
+                                                    btn.setAttribute('data-audio-url', response.audioDataUrl);
+                                                }
+                                            });
+                                        } else {
+                                            console.warn('[AD] Preload failed for one segment:', response?.error || 'Unknown error');
+                                        }
+                                        resolve();
+                                    });
+                                }));
+
+                                const preloadTimeout = new Promise((resolve) => setTimeout(resolve, 2500));
+                                await Promise.race([Promise.allSettled(preloadPromises), preloadTimeout]);
+
+                                // Restart and begin playback after preloading attempt.
                                 const handleSeeked = () => {
                                     video.removeEventListener('seeked', handleSeeked);
                                     console.log('[AD] Video seeked to start.');
@@ -3248,29 +3368,17 @@
                                         console.log('[AD] Pausing video for generated AD...');
                                         video.pause();
                                         window.shouldResumeAfterFirstAD = true;
+                                        // Kick one autoplay check immediately so first AD can start while paused.
+                                        setTimeout(() => {
+                                            video.dispatchEvent(new Event('timeupdate'));
+                                        }, 50);
                                     } else {
                                         console.log('[AD] Playing video...');
                                         video.play();
                                     }
                                 };
                                 video.addEventListener('seeked', handleSeeked);
-
-                                // Best-effort preload in background; never block UX.
-                                const preloadGender = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female';
-                                adSchedule.forEach((ad) => {
-                                    chrome.runtime.sendMessage({
-                                        type: 'PRELOAD_OPENAI_TTS',
-                                        text: ad.description,
-                                        gender: preloadGender,
-                                        speed: settings.get('speed', 50)
-                                    }, (response) => {
-                                        if (response && response.success && response.audioDataUrl) {
-                                            preloadedAudioMap.set(response.text || ad.description, response.audioDataUrl);
-                                        } else {
-                                            console.warn('[AD] Preload failed for one segment:', response?.error || 'Unknown error');
-                                        }
-                                    });
-                                });
+                                video.currentTime = 0;
 
                             } else {
                                 throw new Error(response?.error || 'Unknown error during AD generation');
@@ -3705,14 +3813,14 @@
                             return;
                         }
                         
-                        // Robust check: Only auto-play ADs when in AD tab (using both class and data attributes)
-                        const adTabButton = sidebar.querySelector('.tab-button[data-tab="audio-descriptions"].active');
-                        if (!adTabButton) {
-                            return; // Skip AD auto-play if not in AD tab
+                        if (!isAudioDescriptionEnabled()) {
+                            return;
                         }
                         
-                        // Verify ADs belong to current video before auto-playing
-                        if (!adScheduleVideoUrl || adScheduleVideoUrl !== window.location.href) {
+                        // Verify ADs belong to current video before auto-playing.
+                        const scheduleVideoId = getYoutubeVideoId(adScheduleVideoUrl);
+                        const currentVideoId = getYoutubeVideoId(window.location.href);
+                        if (!adScheduleVideoUrl || (scheduleVideoId && currentVideoId && scheduleVideoId !== currentVideoId)) {
                             return; // Skip if ADs are for a different video
                         }
                         
@@ -3771,33 +3879,40 @@
                                 
                                 const audioUrl = speakerBtn.getAttribute('data-audio-url');
 
-                                // Always regenerate TTS on auto-play to use CURRENT speed settings
-                                // Don't use cached audio because it was generated with old speed
-                                chrome.runtime.sendMessage({
-                                    type: 'CALL_OPENAI_TTS',
-                                    text: nextAd.description,
-                                    gender: gender,
-                                    speed: settings.get('speed', 50)
-                                }, (ttsResponse) => {
-                                    if (ttsResponse && ttsResponse.success) {
-                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn, () => {
-                                            console.log('[AD] AD audio ended');
-                                            // Resume if we paused
-                                            if (shouldPause) {
-                                                console.log('[AD] Resuming video');
-                                                video.play();
-                                            }
-                                        });
-                                    } else {
-                                        console.error('OpenAI TTS error:', ttsResponse?.error);
-                                        // Reset semaphore on error
-                                        isPlayingAd = false;
-                                        // Resume video on error if it was paused
+                                if (audioUrl) {
+                                    playAudioFromDataUrl(audioUrl, speakerBtn, () => {
+                                        console.log('[AD] AD audio ended');
                                         if (shouldPause) {
+                                            console.log('[AD] Resuming video');
                                             video.play();
                                         }
-                                    }
-                                });
+                                    });
+                                } else {
+                                    chrome.runtime.sendMessage({
+                                        type: 'CALL_OPENAI_TTS',
+                                        text: nextAd.description,
+                                        gender: gender,
+                                        speed: settings.get('speed', 50)
+                                    }, (ttsResponse) => {
+                                        if (ttsResponse && ttsResponse.success) {
+                                            preloadedAudioMap.set(nextAd.description, ttsResponse.audioDataUrl);
+                                            speakerBtn.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
+                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn, () => {
+                                                console.log('[AD] AD audio ended');
+                                                if (shouldPause) {
+                                                    console.log('[AD] Resuming video');
+                                                    video.play();
+                                                }
+                                            });
+                                        } else {
+                                            console.error('OpenAI TTS error:', ttsResponse?.error);
+                                            isPlayingAd = false;
+                                            if (shouldPause) {
+                                                video.play();
+                                            }
+                                        }
+                                    });
+                                }
                             }
                         }
                     });
@@ -4073,7 +4188,9 @@ Analyze the video at timestamp ${timeLabel} and answer their question.
 
 User's question: "${question}"
 
-Look at the video content around the timestamp ${timeLabel}. Please provide a clear, concise answer to their question based on what's visible in the video at that time. Answer in approximately ${wordCount} words.`;
+Look at the video content around the timestamp ${timeLabel}. Please provide a clear, concise answer to their question based on what's visible in the video at that time.
+If the key evidence is slightly before/after this timestamp, explicitly say where you observed it using a timestamp in your answer.
+Answer in approximately ${wordCount} words.`;
 
                                         return new Promise((resolve) => {
                                             chrome.runtime.sendMessage({
@@ -4126,6 +4243,7 @@ Look at the video content around the timestamp ${timeLabel}. Please provide a cl
 
                                 try {
                                     const initialTimestamp = video.currentTime;
+                                    let usedTimestamp = initialTimestamp;
                                     // Try both directions for each offset: -3s/+3s, then -9s/+9s, then -30s/+30s
                                     const fallbackOffsets = [{offset: 3, direction: -1}, {offset: 3, direction: 1}, {offset: 9, direction: -1}, {offset: 9, direction: 1}, {offset: 30, direction: -1}, {offset: 30, direction: 1}];
                                     
@@ -4154,10 +4272,12 @@ Look at the video content around the timestamp ${timeLabel}. Please provide a cl
                                             // Use the first valid response
                                             if (isValidResponse(responseBefore)) {
                                                 response = responseBefore;
+                                                usedTimestamp = beforeTimestamp;
                                                 console.log(`[VQA] Got valid response at -${offset}s (${formatTime(beforeTimestamp)})`);
                                                 break;
                                             } else if (isValidResponse(responseAfter)) {
                                                 response = responseAfter;
+                                                usedTimestamp = afterTimestamp;
                                                 console.log(`[VQA] Got valid response at +${offset}s (${formatTime(afterTimestamp)})`);
                                                 break;
                                             }
@@ -4167,9 +4287,12 @@ Look at the video content around the timestamp ${timeLabel}. Please provide a cl
                                     aiTextSpan.textContent = 'Thinking...';
 
                                     if (response && response.success) {
-                                        const responseWithTimestamp = `[${askedAtTimestamp}] ${response.text}`;
+                                        const observedAtTimestamp = formatTime(usedTimestamp);
+                                        const responseWithTimestamp = usedTimestamp === initialTimestamp
+                                            ? `[${askedAtTimestamp}] ${response.text}`
+                                            : `[${askedAtTimestamp}] (Observed at ${observedAtTimestamp}) ${response.text}`;
                                         aiTextSpan.textContent = responseWithTimestamp;
-                                        speakerBtn.setAttribute('data-text', response.text);
+                                        speakerBtn.setAttribute('data-text', responseWithTimestamp);
                                         speakerBtn.style.opacity = '1';
                                         
                                         const user = window.FirebaseAPI?.getCurrentUser();
@@ -4193,18 +4316,18 @@ Look at the video content around the timestamp ${timeLabel}. Please provide a cl
                                             
                                             const messages = [
                                                 { role: 'user', content: question, timestamp: Date.now() },
-                                                { role: 'assistant', content: response.text, timestamp: Date.now() }
+                                                { role: 'assistant', content: responseWithTimestamp, timestamp: Date.now() }
                                             ];
                                             
                                             await window.DatabaseIntegration.saveGeneratedVQA(videoUrl, video.duration, customizations, messages);
                                         }
                                         
                                         const genderResp = settings.get('gender', 'female');
-                                        preloadAndStoreAudio(response.text, speakerBtn, genderResp);
+                                        preloadAndStoreAudio(responseWithTimestamp, speakerBtn, genderResp);
 
                                         chrome.runtime.sendMessage({
                                             type: 'CALL_OPENAI_TTS',
-                                            text: response.text,
+                                            text: responseWithTimestamp,
                                             gender: genderResp,
                                             speed: settings.get('speed', 50)
                                         }, (ttsResponse) => {
