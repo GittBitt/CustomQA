@@ -8,7 +8,7 @@
         "tabs"
     ],
     "host_permissions": [
-        "https://customqa.onrender.com/*",
+        "http://localhost:3000/*",
         "https://*.youtube.com/*",
         "https://firestore.googleapis.com/*"
     ],

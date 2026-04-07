@@ -23,8 +23,8 @@ app.use(cors({
   origin: (origin, callback) => {
     if (!origin || origin.startsWith('chrome-extension://')) {
       callback(null, true);
-    } else if (origin === 'https://customqa.onrender.com') {
-      callback(null, true); // Allow localhost for testing
+    } else if (origin === 'http://localhost') {
+      callback(null, true); // Allow localhost
     } else {
       callback(new Error('Not allowed by CORS'));
     }
@@ -65,7 +65,7 @@ async function verifyToken(req, res, next) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Referer': 'https://customqa.onrender.com',  // Required by Firebase
+          'Referer': 'http://localhost:3000',  // Required by Firebase
           'User-Agent': 'CustomQA-Backend/1.0'  // Identify as backend
         },
         body: JSON.stringify({ idToken: token })
@@ -114,7 +114,7 @@ async function firestoreCall(method, path, body = null, idToken) {
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${idToken}`,
-      'Referer': 'https://customqa.onrender.com',
+      'Referer': 'http://localhost:3000',
       'User-Agent': 'CustomQA-Backend/1.0'
     }
   };
