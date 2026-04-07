@@ -2582,7 +2582,7 @@
                             }
 
                             console.log('[AD] Segment planning complete. Sending URL + segments to Gemini...');
-                            generateAdButton.textContent = 'Generating descriptions... (Click to cancel)';
+                            generateAdButton.textContent = 'Generating AD... (Click to cancel)';
 
                             const customizations = {
                                 length: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
@@ -2632,6 +2632,7 @@
 
                             if (response && response.success) {
                                 console.log('AD Generation successful:', response.text);
+                                generateAdButton.textContent = 'Processing descriptions... (Click to cancel)';
                                 // Strip markdown and parse - more robust cleanup
                                 let jsonString = response.text.trim();
                                 // Remove markdown code blocks
@@ -3506,50 +3507,27 @@
                                 const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
                                 const wordCount = vqaLengthSlider ? vqaLengthSlider.value : 20;
 
-                                const sendGeminiRequest = async (windowSize) => {
+                                const sendGeminiRequest = async (timestampSeconds) => {
                                     try {
                                         const youtubeUrl = window.location.href;
-                                        const currentTime = video.currentTime;
+                                        const timeToAnalyze = timestampSeconds || video.currentTime;
+                                        const timeLabel = formatTime(timeToAnalyze);
 
-                                        const frames = [];
-                                        if (windowSize > 0) {
-                                            const start = Math.max(0, currentTime - windowSize);
-                                            const end = Math.min(video.duration, currentTime + windowSize);
-                                            
-                                            for (let i = start; i <= end; i++) {
-                                                try {
-                                                    console.log(`[VQA] Capturing frame at ${i}s`);
-                                                    const frameData = await captureVideoFrame(i);
-                                                    frames.push({
-                                                        timestamp: i,
-                                                        frameData: frameData
-                                                    });
-                                                } catch (error) {
-                                                    console.error(`[VQA] Failed to capture frame at ${i}s:`, error);
-                                                }
-                                            }
-                                        } else {
-                                            const frameData = await captureVideoFrame(currentTime);
-                                            frames.push({
-                                                timestamp: currentTime,
-                                                frameData: frameData
-                                            });
-                                        }
+                                        console.log(`[VQA] Sending URL + timestamp ${timeLabel} to Gemini`);
 
-                                        if (frames.length === 0) {
-                                            return { success: false, error: 'Could not capture frames' };
-                                        }
+                                        const prompt = `User is watching a YouTube video. 
+Analyze the video at timestamp ${timeLabel} and answer their question.
 
-                                        const prompt = `User is watching a YouTube video at timestamp ${formatTime(currentTime)}.
 User's question: "${question}"
 
-Please analyze the video frames provided and answer their question about what's happening in the video. The frames are captured around the given timestamp. Please answer in approximately ${wordCount} words.`;
+Look at the video content around the timestamp ${timeLabel}. Please provide a clear, concise answer to their question based on what's visible in the video at that time. Answer in approximately ${wordCount} words.`;
 
                                         return new Promise((resolve) => {
                                             chrome.runtime.sendMessage({
-                                                type: 'CALL_GEMINI_VQA_MULTIFRAME',
+                                                type: 'CALL_GEMINI_VQA',
                                                 prompt: prompt,
-                                                frames: frames
+                                                videoUrl: youtubeUrl,
+                                                timestamp: timeToAnalyze
                                             }, (response) => {
                                                 resolve(response);
                                             });
@@ -3572,6 +3550,9 @@ Please analyze the video frames provided and answer their question about what's 
                                         "cannot determine",
                                         "unable to determine",
                                         "not visible",
+                                        "is not visible",
+                                        "there is no",
+                                        "is no",
                                         "no frames",
                                         "cannot answer",
                                         "can't answer",
@@ -3591,23 +3572,40 @@ Please analyze the video frames provided and answer their question about what's 
                                 };
 
                                 try {
-                                    const initialWindow = 3;
-                                    const fallbackWindows = [9, 30];
+                                    const initialTimestamp = video.currentTime;
+                                    // Try both directions for each offset: -3s/+3s, then -9s/+9s, then -30s/+30s
+                                    const fallbackOffsets = [{offset: 3, direction: -1}, {offset: 3, direction: 1}, {offset: 9, direction: -1}, {offset: 9, direction: 1}, {offset: 30, direction: -1}, {offset: 30, direction: 1}];
                                     
-                                    aiTextSpan.textContent = `Capturing frames for ±${initialWindow}s...`;
-                                    let response = await sendGeminiRequest(initialWindow);
+                                    aiTextSpan.textContent = `Analyzing video at ${formatTime(initialTimestamp)}...`;
+                                    let response = await sendGeminiRequest(initialTimestamp);
                                     aiTextSpan.textContent = 'Processing...';
 
                                     if (isValidResponse(response)) {
-                                        console.log('[VQA] Got valid response with initial window');
+                                        console.log('[VQA] Got valid response at initial timestamp');
                                     } else {
-                                        console.log('[VQA] Initial response invalid, attempting fallback strategy');
-                                        for (const windowSize of fallbackWindows) {
-                                            aiTextSpan.textContent = `Expanding to ±${windowSize}s...`;
+                                        console.log('[VQA] Initial response invalid, expanding in both directions');
+                                        const offsetSizes = [3, 9, 30, 60];
+                                        
+                                        for (const offset of offsetSizes) {
+                                            const beforeTimestamp = Math.max(0, initialTimestamp - offset);
+                                            const afterTimestamp = Math.min(initialTimestamp + offset, video.duration);
                                             
-                                            response = await sendGeminiRequest(windowSize);
-                                            if (isValidResponse(response)) {
-                                                console.log(`[VQA] Got valid response with ${windowSize}s window`);
+                                            aiTextSpan.textContent = `Not enough context. Checking frames at ${formatTime(beforeTimestamp)} and ${formatTime(afterTimestamp)}...`;
+                                            
+                                            // Try both directions in parallel
+                                            const [responseBefore, responseAfter] = await Promise.all([
+                                                sendGeminiRequest(beforeTimestamp),
+                                                sendGeminiRequest(afterTimestamp)
+                                            ]);
+                                            
+                                            // Use the first valid response
+                                            if (isValidResponse(responseBefore)) {
+                                                response = responseBefore;
+                                                console.log(`[VQA] Got valid response at -${offset}s (${formatTime(beforeTimestamp)})`);
+                                                break;
+                                            } else if (isValidResponse(responseAfter)) {
+                                                response = responseAfter;
+                                                console.log(`[VQA] Got valid response at +${offset}s (${formatTime(afterTimestamp)})`);
                                                 break;
                                             }
                                         }
