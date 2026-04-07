@@ -1,4 +1,145 @@
 (() => {
+    // ==================== SETTINGS MANAGER ====================
+    class SettingsManager {
+        constructor() {
+            this.settings = {
+                // Shared presentation settings
+                volume: 100,
+                speed: 50,
+                voice: 'human',
+                gender: 'female',
+                
+                // Whisper/Speech-to-Text settings
+                whisperLanguage: 'en',
+                whisperTemperature: 0.7,
+                whisperPrompt: '',
+                whisperResponseFormat: 'json',
+                
+                // AD-specific content settings
+                adLength: 25,
+                adFrequency: 'sometimes',
+                adEmphasis: 'balanced',
+                adNarrationStyle: 'objective',
+                adColor: 'on',
+                adPauseDuringAd: false,
+                
+                // VQA-specific settings
+                vqaLength: 25
+            };
+        }
+
+        // Initialize from Chrome storage
+        async init() {
+            return new Promise((resolve) => {
+                chrome.storage.sync.get(null, (data) => {
+                    if (data && Object.keys(data).length > 0) {
+                        this.settings = { ...this.settings, ...data };
+                        console.log('[Settings] Loaded from storage:', this.settings);
+                    } else {
+                        console.log('[Settings] Using defaults:', this.settings);
+                    }
+                    resolve();
+                });
+            });
+        }
+
+        // Get a setting value
+        get(key, defaultValue = null) {
+            return this.settings.hasOwnProperty(key) ? this.settings[key] : defaultValue;
+        }
+
+        // Set and auto-save
+        set(key, value) {
+            this.settings[key] = value;
+            chrome.storage.sync.set({ [key]: value });
+            console.log(`[Settings] Updated ${key}:`, value);
+        }
+
+        // Get all settings
+        getAll() {
+            return { ...this.settings };
+        }
+
+        // For AD customizations
+        getAdCustomizations() {
+            return {
+                length: this.get('adLength'),
+                frequency: this.get('adFrequency'),
+                intervalSeconds: this.getFrequencyInterval(this.get('adFrequency')),
+                emphasis: this.get('adEmphasis'),
+                subjectiveness: this.get('adNarrationStyle'),
+                colorPreference: this.get('adColor'),
+                presentation: {
+                    volume: this.get('volume'),
+                    speed: this.get('speed'),
+                    voice: this.get('voice'),
+                    gender: this.get('gender')
+                },
+                content: {
+                    emphasis: this.get('adEmphasis'),
+                    narrationStyle: this.get('adNarrationStyle'),
+                    colorDescriptions: this.get('adColor')
+                },
+                setup: {
+                    adEnabled: true,
+                    pauseDuringAd: this.get('adPauseDuringAd')
+                }
+            };
+        }
+
+        // For VQA customizations
+        getVqaCustomizations() {
+            return {
+                length: this.get('vqaLength'),
+                presentation: {
+                    volume: this.get('volume'),
+                    speed: this.get('speed'),
+                    voice: this.get('voice'),
+                    gender: this.get('gender')
+                }
+            };
+        }
+
+        // For Whisper/Speech-to-Text customizations
+        getWhisperSettings() {
+            return {
+                language: this.get('whisperLanguage', 'en'),
+                temperature: this.get('whisperTemperature', 0.7),
+                prompt: this.get('whisperPrompt', ''),
+                responseFormat: this.get('whisperResponseFormat', 'json')
+            };
+        }
+
+        // Helper to convert frequency to seconds
+        getFrequencyInterval(frequency) {
+            const map = {
+                'rarely': 60,
+                'sometimes': 30,
+                'often': 15,
+                'very-often': 8
+            };
+            return map[frequency] || 30;
+        }
+    }
+
+    // Initialize settings manager globally
+    const settings = new SettingsManager();
+    
+    // ======================================================
+    // Debounce utility to prevent rate limiting on rapid slider changes
+    const debounce = (func, wait = 300) => {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    };
+    // ======================================================
+
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const gainNode = audioContext.createGain();
     gainNode.connect(audioContext.destination);
@@ -82,10 +223,11 @@
 
                     gainNode.gain.value = currentVolume;
 
-                    const speedSlider = document.getElementById('ad-speed-slider') || document.getElementById('vqa-speed-slider');
-                    if (speedSlider) {
-                        source.playbackRate.value = parseFloat(speedSlider.value) / 50;
-                    }
+                    // NOTE: Speed is now handled at the OpenAI TTS API level as an attribute parameter.
+                    // Web Audio API's playbackRate inherently couples speed and pitch together,
+                    // making speech sound like chipmunks when sped up. By passing speed to OpenAI TTS
+                    // as an attribute, the audio is generated at the correct speed without pitch distortion.
+                    // Do NOT use playbackRate here.
 
                     source.onended = () => {
                         console.log('Audio playback ended.');
@@ -148,7 +290,8 @@
             chrome.runtime.sendMessage({
                 type: 'PRELOAD_OPENAI_TTS',
                 text: text,
-                gender: gender
+                gender: gender,
+                speed: settings.get('speed', 50)
             }, (response) => {
                 if (response && response.success) {
                     preloadedAudioMap.set(response.text, response.audioDataUrl);
@@ -189,6 +332,8 @@
                 // Inline Firebase REST API with persistent auth
                 let currentUser_FBAuth = null;
                 let idToken_FBAuth = null;
+                let refreshToken_FBAuth = null;
+                let tokenExpiresAt_FBAuth = 0;
 
                 // Load persisted auth on initialization
                 const loadPersistedAuth = () => {
@@ -198,6 +343,8 @@
                             const auth = JSON.parse(persisted);
                             currentUser_FBAuth = auth.user;
                             idToken_FBAuth = auth.token;
+                            refreshToken_FBAuth = auth.refreshToken || null;
+                            tokenExpiresAt_FBAuth = Number(auth.tokenExpiresAt || 0);
                             return true;
                         } catch (e) {
                             console.error('Failed to load persisted auth:', e);
@@ -207,12 +354,62 @@
                     return false;
                 };
 
-                const savePersistedAuth = (user, token) => {
-                    localStorage.setItem('customqa_auth', JSON.stringify({ user, token }));
+                const savePersistedAuth = (user, token, refreshToken = refreshToken_FBAuth, tokenExpiresAt = tokenExpiresAt_FBAuth) => {
+                    localStorage.setItem('customqa_auth', JSON.stringify({
+                        user,
+                        token,
+                        refreshToken,
+                        tokenExpiresAt
+                    }));
                 };
 
                 const clearPersistedAuth = () => {
                     localStorage.removeItem('customqa_auth');
+                };
+
+                const refreshIdToken = async () => {
+                    if (!refreshToken_FBAuth) {
+                        return false;
+                    }
+
+                    try {
+                        const response = await fetch(
+                            `https://securetoken.googleapis.com/v1/token?key=${window.firebaseConfig.apiKey}`,
+                            {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken_FBAuth)}`
+                            }
+                        );
+
+                        const data = await response.json();
+                        if (!response.ok || !data.id_token) {
+                            console.warn('[CustomQA] Failed to refresh Firebase token:', data?.error?.message || response.statusText);
+                            return false;
+                        }
+
+                        idToken_FBAuth = data.id_token;
+                        refreshToken_FBAuth = data.refresh_token || refreshToken_FBAuth;
+                        const expiresInSeconds = parseInt(data.expires_in || '3600', 10);
+                        tokenExpiresAt_FBAuth = Date.now() + Math.max(0, expiresInSeconds - 60) * 1000;
+                        savePersistedAuth(currentUser_FBAuth, idToken_FBAuth, refreshToken_FBAuth, tokenExpiresAt_FBAuth);
+                        return true;
+                    } catch (error) {
+                        console.error('[CustomQA] Error refreshing Firebase token:', error);
+                        return false;
+                    }
+                };
+
+                const ensureValidIdToken = async () => {
+                    if (!idToken_FBAuth) {
+                        return false;
+                    }
+
+                    if (!tokenExpiresAt_FBAuth || Date.now() >= tokenExpiresAt_FBAuth) {
+                        return refreshIdToken();
+                    }
+
+                    return true;
                 };
 
                 window.FirebaseAPI = {
@@ -230,6 +427,8 @@
                             if (!response.ok) throw new Error(data.error?.message || 'Login failed');
 
                             idToken_FBAuth = data.idToken;
+                            refreshToken_FBAuth = data.refreshToken || null;
+                            tokenExpiresAt_FBAuth = Date.now() + Math.max(0, (parseInt(data.expiresIn || '3600', 10) - 60)) * 1000;
                             
                             // Use Firebase UID as primary document ID for reliability (never changes)
                             currentUser_FBAuth = { uid: data.localId, email };
@@ -264,7 +463,7 @@
                                 currentUser_FBAuth.role = 'guest';
                             }
                             
-                            savePersistedAuth(currentUser_FBAuth, idToken_FBAuth);
+                            savePersistedAuth(currentUser_FBAuth, idToken_FBAuth, refreshToken_FBAuth, tokenExpiresAt_FBAuth);
                             return { success: true, user: { email, role: currentUser_FBAuth.role }, uid: data.localId };
                         } catch (error) {
                             console.error('[CustomQA] Login error:', error);
@@ -286,6 +485,8 @@
                             if (!response.ok) throw new Error(data.error?.message || 'Signup failed');
 
                             idToken_FBAuth = data.idToken;
+                            refreshToken_FBAuth = data.refreshToken || null;
+                            tokenExpiresAt_FBAuth = Date.now() + Math.max(0, (parseInt(data.expiresIn || '3600', 10) - 60)) * 1000;
                             
                             // Use Firebase UID as document ID (reliable, never changes)
                             // Generate friendly custom ID to store in document: "username_timestamp"
@@ -293,7 +494,7 @@
                             const customUserId = `${username}_${Date.now()}`;
                             
                             currentUser_FBAuth = { uid: data.localId, email, role };
-                            savePersistedAuth(currentUser_FBAuth, idToken_FBAuth);
+                            savePersistedAuth(currentUser_FBAuth, idToken_FBAuth, refreshToken_FBAuth, tokenExpiresAt_FBAuth);
 
                             // Create user profile documents using Firebase UID, store custom ID as field
                             await this.createUserProfileDocuments(data.localId, email, role, idToken_FBAuth, customUserId);
@@ -358,6 +559,8 @@
                     async logout() {
                         currentUser_FBAuth = null;
                         idToken_FBAuth = null;
+                        refreshToken_FBAuth = null;
+                        tokenExpiresAt_FBAuth = 0;
                         clearPersistedAuth();
                         return { success: true };
                     },
@@ -375,14 +578,38 @@
                         // Set up polling-based listener since REST API doesn't support real-time
                         const checkInterval = setInterval(async () => {
                             try {
+                                const hasValidToken = await ensureValidIdToken();
+                                if (!hasValidToken) {
+                                    console.warn('[CustomQA] Auth expired and refresh failed; stopping role listener.');
+                                    clearInterval(checkInterval);
+                                    return;
+                                }
+
                                 const userDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}`;
-                                const response = await fetch(
+                                let response = await fetch(
                                     `https://firestore.googleapis.com/v1/${userDocPath}?key=${window.firebaseConfig.apiKey}`,
                                     {
                                         method: 'GET',
                                         headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
                                     }
                                 );
+
+                                if (response.status === 401) {
+                                    const refreshed = await refreshIdToken();
+                                    if (!refreshed) {
+                                        console.warn('[CustomQA] Unauthorized in role listener and token refresh failed; stopping listener.');
+                                        clearInterval(checkInterval);
+                                        return;
+                                    }
+
+                                    response = await fetch(
+                                        `https://firestore.googleapis.com/v1/${userDocPath}?key=${window.firebaseConfig.apiKey}`,
+                                        {
+                                            method: 'GET',
+                                            headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                        }
+                                    );
+                                }
 
                                 if (response.ok) {
                                     const data = await response.json();
@@ -406,7 +633,7 @@
                     },
 
                     async loadSettings(userId) {
-                        if (!idToken_FBAuth) return null;
+                        if (!(await ensureValidIdToken())) return null;
                         try {
                             const response = await fetch(
                                 `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}?key=${window.firebaseConfig.apiKey}`,
@@ -450,14 +677,18 @@
                     },
 
                     async saveSettings(userId, settings) {
-                        if (!idToken_FBAuth) return false;
+                        if (!(await ensureValidIdToken())) return false;
                         try {
                             const docPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}`;
                             
-                            // Build updateMask to preserve other fields (email, etc)
+                            // Get current user info (email, role) from currentUser_FBAuth
+                            const userEmail = currentUser_FBAuth?.email || settings.email || '';
+                            const userRole = currentUser_FBAuth?.role || settings.role || 'user';
+                            
+                            // Build updateMask to include all fields: user info, AD settings, VQA settings, and timestamps
                             const maskParams = new URLSearchParams();
                             maskParams.append('key', window.firebaseConfig.apiKey);
-                            ['adVolume', 'adSpeed', 'adGender', 'adVoice', 'adLength', 'adFrequency',
+                            ['email', 'role', 'adVolume', 'adSpeed', 'adGender', 'adVoice', 'adLength', 'adFrequency',
                              'adEmphasis', 'adColorPreference', 'adNarrationStyle', 'adPauseDuringAd',
                              'vqaVolume', 'vqaSpeed', 'vqaGender', 'vqaLength', 'updatedAt'].forEach(field => {
                                 maskParams.append('updateMask.fieldPaths', field);
@@ -473,22 +704,29 @@
                                     },
                                     body: JSON.stringify({
                                         fields: {
-                                            // AD settings
+                                            // User profile information
+                                            email: { stringValue: userEmail },
+                                            role: { stringValue: userRole },
+                                            // AD presentation customization
                                             adVolume: { integerValue: parseInt(settings.adVolume || 100) },
                                             adSpeed: { integerValue: parseInt(settings.adSpeed || 50) },
                                             adGender: { stringValue: settings.adGender || 'female' },
                                             adVoice: { stringValue: settings.adVoice || 'human' },
+                                            // AD content customization
                                             adLength: { integerValue: parseInt(settings.adLength || 25) },
                                             adFrequency: { stringValue: settings.adFrequency || 'sometimes' },
                                             adEmphasis: { stringValue: settings.adEmphasis || 'balanced' },
                                             adColorPreference: { stringValue: settings.adColorPreference || 'on' },
                                             adNarrationStyle: { stringValue: settings.adNarrationStyle || 'objective' },
+                                            // AD customization setup
                                             adPauseDuringAd: { booleanValue: settings.adPauseDuringAd ?? true },
-                                            // VQA settings
+                                            // VQA presentation customization
                                             vqaVolume: { integerValue: parseInt(settings.vqaVolume || 100) },
                                             vqaSpeed: { integerValue: parseInt(settings.vqaSpeed || 50) },
                                             vqaGender: { stringValue: settings.vqaGender || 'female' },
+                                            // VQA content customization
                                             vqaLength: { integerValue: parseInt(settings.vqaLength || 25) },
+                                            // Timestamps
                                             updatedAt: { timestampValue: new Date().toISOString() }
                                         }
                                     })
@@ -499,7 +737,7 @@
                                 console.error('Save settings error:', data.error?.message || JSON.stringify(data));
                                 return false;
                             }
-                            console.log('Settings saved successfully');
+                            console.log('[CustomQA] Settings saved successfully for user:', userEmail, 'with role:', userRole);
                             return true;
                         } catch (error) {
                             console.error('Error saving settings:', error);
@@ -1491,6 +1729,20 @@
                                             return;
                                         }
                                         
+                                        // Prevent simultaneous audio playback: stop any currently playing audio from different button
+                                        if (currentAudio && currentPlayingButton !== thisButton) {
+                                            try {
+                                                currentAudio.stop();
+                                                currentAudio = null;
+                                                if (currentPlayingButton) {
+                                                    setButtonToSpeakerIcon(currentPlayingButton);
+                                                }
+                                                currentPlayingButton = null;
+                                            } catch (e) {
+                                                // Ignore error if audio is already stopped
+                                            }
+                                        }
+                                        
                                         const textToSpeak = thisButton.getAttribute('data-text');
                                         const adTimestamp = parseFloat(thisButton.getAttribute('data-timestamp')) || 0;
                                         const videoTime = video?.currentTime || 0;
@@ -1510,7 +1762,8 @@
                                         chrome.runtime.sendMessage({
                                             type: 'CALL_OPENAI_TTS',
                                             text: textToSpeak,
-                                            gender: gender
+                                            gender: gender,
+                                            speed: settings.get('speed', 50)
                                         }, (ttsResponse) => {
                                             if (ttsResponse && ttsResponse.success) {
                                                 playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, delayMs);
@@ -1539,8 +1792,7 @@
                                 // Auto-preload all previously loaded AD audio
                                 setTimeout(() => {
                                     console.log('[CustomQA] Preloading all previously loaded AD audio...');
-                                    const genderBtn = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
-                                    const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                                    const gender = settings.get('gender', 'female');
                                     
                                     const allAdButtons = sidebar.querySelectorAll('#ad-messages [id$="-loaded-"] button[data-text]');
                                     allAdButtons.forEach(btn => {
@@ -1692,13 +1944,28 @@
                                             currentAudio.stop();
                                             return;
                                         }
-                                        const genderBtn = sidebar.querySelector('#vqa-gender-group .pill-button.active');
-                                        const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                                        
+                                        // Prevent simultaneous audio playback: stop any currently playing audio from different button
+                                        if (currentAudio && currentPlayingButton !== thisButton) {
+                                            try {
+                                                currentAudio.stop();
+                                                currentAudio = null;
+                                                if (currentPlayingButton) {
+                                                    setButtonToSpeakerIcon(currentPlayingButton);
+                                                }
+                                                currentPlayingButton = null;
+                                            } catch (e) {
+                                                // Ignore error if audio is already stopped
+                                            }
+                                        }
+                                        
+                                        const gender = settings.get('gender', 'female');
                                         const textToSpeak = thisButton.getAttribute('data-text');
                                         chrome.runtime.sendMessage({
                                             type: 'CALL_OPENAI_TTS',
                                             text: textToSpeak,
-                                            gender: gender
+                                            gender: gender,
+                                            speed: settings.get('speed', 50)
                                         }, (ttsResponse) => {
                                             if (ttsResponse && ttsResponse.success) {
                                                 playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
@@ -1754,13 +2021,28 @@
                                             currentAudio.stop();
                                             return;
                                         }
-                                        const genderBtn = sidebar.querySelector('#vqa-gender-group .pill-button.active');
-                                        const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                                        
+                                        // Prevent simultaneous audio playback: stop any currently playing audio from different button
+                                        if (currentAudio && currentPlayingButton !== thisButton) {
+                                            try {
+                                                currentAudio.stop();
+                                                currentAudio = null;
+                                                if (currentPlayingButton) {
+                                                    setButtonToSpeakerIcon(currentPlayingButton);
+                                                }
+                                                currentPlayingButton = null;
+                                            } catch (e) {
+                                                // Ignore error if audio is already stopped
+                                            }
+                                        }
+                                        
+                                        const gender = settings.get('gender', 'female');
                                         const textToSpeak = thisButton.getAttribute('data-text');
                                         chrome.runtime.sendMessage({
                                             type: 'CALL_OPENAI_TTS',
                                             text: textToSpeak,
-                                            gender: gender
+                                            gender: gender,
+                                            speed: settings.get('speed', 50)
                                         }, (ttsResponse) => {
                                             if (ttsResponse && ttsResponse.success) {
                                                 playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
@@ -1769,28 +2051,27 @@
                                             }
                                         });
                                     });
-                                    
-                                    aiMessageContainer.appendChild(message);
-                                    aiMessageContainer.appendChild(answerSpeakerBtn);
-                                    vqaMessages.appendChild(aiMessageContainer);
-                                });
-                                
-                                console.log('[CustomQA] VQA display complete - Questions:', questions.length, 'Answers:', answers.length);
-                                
-                                // Auto-preload all displayed VQA audio
-                                setTimeout(() => {
-                                    console.log('[CustomQA] Preloading all previously loaded VQA audio...');
-                                    const genderBtn = sidebar.querySelector('#vqa-gender-group .pill-button.active');
-                                    const gender = genderBtn ? genderBtn.dataset.gender : 'female';
-                                    
-                                    const allVqaButtons = sidebar.querySelectorAll('.vqa-sub-tab-content [role="tabpanel"] button[data-text]');
-                                    allVqaButtons.forEach(btn => {
-                                        const text = btn.getAttribute('data-text');
-                                        if (text && !preloadedAudioMap.has(text)) {
-                                            preloadAndStoreAudio(text, btn, gender);
-                                        }
-                                    });
-                                }, 100);
+                    
+                    aiMessageContainer.appendChild(message);
+                    aiMessageContainer.appendChild(answerSpeakerBtn);
+                    vqaMessages.appendChild(aiMessageContainer);
+                });
+                
+                console.log('[CustomQA] VQA display complete - Questions:', questions.length, 'Answers:', answers.length);
+                
+                // Auto-preload all displayed VQA audio
+                setTimeout(() => {
+                    console.log('[CustomQA] Preloading all previously loaded VQA audio...');
+                    const gender = settings.get('gender', 'female');
+                    
+                    const allVqaButtons = sidebar.querySelectorAll('.vqa-sub-tab-content [role="tabpanel"] button[data-text]');
+                    allVqaButtons.forEach(btn => {
+                        const text = btn.getAttribute('data-text');
+                        if (text && !preloadedAudioMap.has(text)) {
+                            preloadAndStoreAudio(text, btn, gender);
+                        }
+                    });
+                }, 100);
                             } else {
                                 console.warn('[CustomQA] VQA container not found - cannot display previous questions');
                             }
@@ -1835,7 +2116,7 @@
                 // Helper function to get ALL current settings from a tab
                 const getAllSettings = (tab) => {
                     const isADTab = tab.id === 'audio-descriptions-tab';
-                    const settings = {};
+                    const dbSettings = {};
                     
                     if (isADTab) {
                         // === AD PRESENTATION CUSTOMIZATION ===
@@ -1844,10 +2125,10 @@
                         const genderBtn = tab.querySelector('.pill-button[data-gender].active');
                         const voiceBtn = tab.querySelector('.pill-button[data-voice].active');
                         
-                        settings.adVolume = volumeSlider ? parseInt(volumeSlider.value) : 50;
-                        settings.adSpeed = speedSlider ? parseInt(speedSlider.value) : 50;
-                        settings.adGender = genderBtn ? genderBtn.dataset.gender : 'female';
-                        settings.adVoice = voiceBtn ? voiceBtn.dataset.voice : 'human';
+                        const volume = volumeSlider ? parseInt(volumeSlider.value) : 100;
+                        const speed = speedSlider ? parseInt(speedSlider.value) : 50;
+                        const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                        const voice = voiceBtn ? voiceBtn.dataset.voice : 'human';
 
                         // === AD CONTENT CUSTOMIZATION ===
                         const lengthSlider = tab.querySelector('#length-slider');
@@ -1856,31 +2137,67 @@
                         const colorBtn = tab.querySelector('.pill-button[data-color].active');
                         const narrationBtn = tab.querySelector('.pill-button[data-narration].active');
                         
-                        settings.adLength = lengthSlider ? parseInt(lengthSlider.value) : 25;
-                        settings.adFrequency = frequencyBtn ? frequencyBtn.dataset.frequency : 'sometimes';
-                        settings.adEmphasis = emphasisBtn ? emphasisBtn.dataset.emphasis : 'balanced';
-                        settings.adColorPreference = colorBtn ? colorBtn.dataset.color : 'on';
-                        settings.adNarrationStyle = narrationBtn ? narrationBtn.dataset.narration : 'objective';
+                        const adLength = lengthSlider ? parseInt(lengthSlider.value) : 25;
+                        const frequency = frequencyBtn ? frequencyBtn.dataset.frequency : 'sometimes';
+                        const emphasis = emphasisBtn ? emphasisBtn.dataset.emphasis : 'balanced';
+                        const color = colorBtn ? colorBtn.dataset.color : 'on';
+                        const narration = narrationBtn ? narrationBtn.dataset.narration : 'objective';
 
                         // === AD CUSTOMIZATION SETUPS ===
                         const pauseBtn = tab.querySelector('#pause-ad-group .pill-button.active');
-                        settings.adPauseDuringAd = pauseBtn ? pauseBtn.dataset.action === 'pause-on' : true;
+                        const pauseDuringAd = pauseBtn ? pauseBtn.dataset.action === 'pause-on' : false;
+
+                        // Save to global settings manager (syncs to chrome.storage.sync)
+                        settings.set('volume', volume);
+                        settings.set('speed', speed);
+                        settings.set('gender', gender);
+                        settings.set('voice', voice);
+                        settings.set('adLength', adLength);
+                        settings.set('adFrequency', frequency);
+                        settings.set('adEmphasis', emphasis);
+                        settings.set('adColor', color);
+                        settings.set('adNarrationStyle', narration);
+                        settings.set('adPauseDuringAd', pauseDuringAd);
+
+                        // For database (backwards compatibility)
+                        dbSettings.adVolume = volume;
+                        dbSettings.adSpeed = speed;
+                        dbSettings.adGender = gender;
+                        dbSettings.adVoice = voice;
+                        dbSettings.adLength = adLength;
+                        dbSettings.adFrequency = frequency;
+                        dbSettings.adEmphasis = emphasis;
+                        dbSettings.adColorPreference = color;
+                        dbSettings.adNarrationStyle = narration;
+                        dbSettings.adPauseDuringAd = pauseDuringAd;
                     } else {
                         // === VQA PRESENTATION CUSTOMIZATION ===
                         const volumeSlider = tab.querySelector('#vqa-volume-slider');
                         const speedSlider = tab.querySelector('#vqa-speed-slider');
                         const genderBtn = tab.querySelector('#vqa-tab .pill-button[data-gender].active');
                         
-                        settings.vqaVolume = volumeSlider ? parseInt(volumeSlider.value) : 100;
-                        settings.vqaSpeed = speedSlider ? parseInt(speedSlider.value) : 50;
-                        settings.vqaGender = genderBtn ? genderBtn.dataset.gender : 'female';
+                        const volume = volumeSlider ? parseInt(volumeSlider.value) : 100;
+                        const speed = speedSlider ? parseInt(speedSlider.value) : 50;
+                        const gender = genderBtn ? genderBtn.dataset.gender : 'female';
 
                         // === VQA CONTENT CUSTOMIZATION ===
                         const lengthSlider = tab.querySelector('#vqa-length-slider');
-                        settings.vqaLength = lengthSlider ? parseInt(lengthSlider.value) : 25;
+                        const vqaLength = lengthSlider ? parseInt(lengthSlider.value) : 25;
+
+                        // Save to global settings manager (syncs to chrome.storage.sync)
+                        settings.set('volume', volume);
+                        settings.set('speed', speed);
+                        settings.set('gender', gender);
+                        settings.set('vqaLength', vqaLength);
+
+                        // For database (backwards compatibility)
+                        dbSettings.vqaVolume = volume;
+                        dbSettings.vqaSpeed = speed;
+                        dbSettings.vqaGender = gender;
+                        dbSettings.vqaLength = vqaLength;
                     }
                     
-                    return settings;
+                    return dbSettings;
                 };
 
                 // Helper function to save ALL settings to Firestore
@@ -1923,10 +2240,7 @@
                 // Function to preload all visible audio when settings change
                 const preloadAllVisibleAudio = () => {
                     // Get current gender setting
-                    const genderBtnAD = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
-                    const genderBtnVQA = sidebar.querySelector('#vqa-gender-group .pill-button[data-gender].active');
-                    const genderAD = genderBtnAD ? genderBtnAD.dataset.gender : 'female';
-                    const genderVQA = genderBtnVQA ? genderBtnVQA.dataset.gender : 'female';
+                    const gender = settings.get('gender', 'female');
                     
                     // Preload AD audio
                     const adSpeakerButtons = sidebar.querySelectorAll('#ad-messages [id^="ad-speaker-btn"]');
@@ -1935,7 +2249,7 @@
                         if (text) {
                             // Always preload (don't check for existing data-audio-url)
                             console.log('[CustomQA] Preloading AD audio for:', text.substring(0, 30) + '...');
-                            preloadAndStoreAudio(text, btn, genderAD);
+                            preloadAndStoreAudio(text, btn, gender);
                         }
                     });
                     
@@ -1946,7 +2260,7 @@
                         if (text) {
                             // Always preload (don't check for existing data-audio-url)
                             console.log('[CustomQA] Preloading VQA audio for:', text.substring(0, 30) + '...');
-                            preloadAndStoreAudio(text, btn, genderVQA);
+                            preloadAndStoreAudio(text, btn, gender);
                         }
                     });
                     
@@ -1959,41 +2273,106 @@
                     }
                 });
 
-                const volumeChangeHandler = (e) => {
-                    const newVolume = e.target.value;
+                // Sync all UI elements to current SettingsManager values
+                const syncUIToSettings = () => {
+                    // Sync volume sliders
+                    const adVolSlider = sidebar.querySelector('#ad-volume-slider');
+                    const vqaVolSlider = sidebar.querySelector('#vqa-volume-slider');
+                    const volume = settings.get('volume', 100);
+                    if (adVolSlider) adVolSlider.value = volume;
+                    if (vqaVolSlider) vqaVolSlider.value = volume;
+
+                    // Sync speed sliders
+                    const adSpeedSlider = sidebar.querySelector('#ad-speed-slider');
+                    const vqaSpeedSlider = sidebar.querySelector('#vqa-speed-slider');
+                    const speed = settings.get('speed', 50);
+                    if (adSpeedSlider) {
+                        adSpeedSlider.value = speed;
+                        adSpeedSlider.setAttribute('aria-valuetext', `Speed ${speed}%`);
+                    }
+                    if (vqaSpeedSlider) {
+                        vqaSpeedSlider.value = speed;
+                        vqaSpeedSlider.setAttribute('aria-valuetext', `Speed ${speed}%`);
+                    }
+
+                    // Sync gender buttons
+                    const gender = settings.get('gender', 'female');
+                    const genderBtn = sidebar.querySelector(`.pill-button[data-gender="${gender}"]`);
+                    if (genderBtn) {
+                        sidebar.querySelectorAll('.pill-button[data-gender]').forEach(btn => btn.classList.remove('active'));
+                        genderBtn.classList.add('active');
+                    }
+
+                    // Sync length sliders
+                    const adLengthSlider = sidebar.querySelector('#length-slider');
+                    const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
+                    const adLength = settings.get('adLength', 25);
+                    const vqaLength = settings.get('vqaLength', 25);
+                    if (adLengthSlider) {
+                        adLengthSlider.value = adLength;
+                        const adLengthValue = sidebar.querySelector('#ad-length-value');
+                        if (adLengthValue) adLengthValue.textContent = adLength;
+                    }
+                    if (vqaLengthSlider) {
+                        vqaLengthSlider.value = vqaLength;
+                        const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
+                        if (vqaLengthValue) vqaLengthValue.textContent = vqaLength;
+                    }
+
+                    console.log('[CustomQA] UI synced to settings:', {
+                        volume, speed, gender, adLength, vqaLength
+                    });
+                };
+                
+                // Sync UI immediately after showing sidebar
+                syncUIToSettings();
+
+                const debouncedVolumeSave = debounce((newVolume) => {
                     chrome.storage.sync.set({ volume: newVolume });
-                    setSliderValues(newVolume); // Keep sliders in sync
-                    // Update currentVolume for immediate playback changes
-                    currentVolume = parseFloat(newVolume) / 100;
-                    console.log('[CustomQA] Volume updated to:', currentVolume);
-                    
-                    // Clear preloaded audio cache and regenerate with new volume
+                    settings.set('volume', newVolume);
                     clearAudioCache();
-                    
-                    // Save all settings when volume changes
                     const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                     if (activeTab) {
                         saveAllSettings(activeTab);
-                        // Preload all audio with new settings after a brief delay
                         setTimeout(() => {
                             preloadAllVisibleAudio();
                         }, 50);
                     }
+                }, 300);
+
+                const volumeChangeHandler = (e) => {
+                    const newVolume = e.target.value;
+                    // Instant UI updates (no debounce needed - just DOM updates)
+                    setSliderValues(newVolume);
+                    currentVolume = parseFloat(newVolume) / 100;
+                    console.log('[CustomQA] Volume updated to:', currentVolume);
+                    // Debounced storage/DB save (only after dragging stops)
+                    debouncedVolumeSave(newVolume);
                 };
 
                 if (adVolumeSlider) {
                     adVolumeSlider.addEventListener('input', volumeChangeHandler);
-                    adVolumeSlider.addEventListener('input', preloadAllVisibleAudio);
                 }
                 if (vqaVolumeSlider) {
                     vqaVolumeSlider.addEventListener('input', volumeChangeHandler);
-                    vqaVolumeSlider.addEventListener('input', preloadAllVisibleAudio);
                 }
 
                 const vqaBadgeButton = sidebar.querySelector('.vqa-badge');
                 if (vqaBadgeButton) {
                     vqaBadgeButton.addEventListener('click', () => {
                         chrome.runtime.sendMessage({ type: 'OPEN_POPUP' });
+                    });
+                }
+                
+                // Add enter key support for chat input
+                const chatInput = sidebar.querySelector('#vqa-tab .chat-input');
+                if (chatInput) {
+                    chatInput.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            // Trigger the send button click
+                            vqaSendButton.click();
+                        }
                     });
                 }
 
@@ -2096,38 +2475,31 @@
                     }
                 };
 
+                // Shared debounced handler for both length sliders (synced between AD and VQA)
+                const debouncedLengthChange = debounce((value) => {
+                    preloadedAudioMap.clear();
+                    // Save to both AD and VQA to keep them in sync
+                    settings.set('adLength', value);
+                    settings.set('vqaLength', value);
+                    const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                    if (activeTab) {
+                        saveAllSettings(activeTab);
+                        setTimeout(() => {
+                            preloadAllVisibleAudio();
+                        }, 50);
+                    }
+                }, 300);
+                
                 if (lengthSlider) {
                     lengthSlider.addEventListener('input', (e) => {
                         syncLengthSliders(e.target);
-                        // Clear preloaded audio cache when length changes
-                        console.log('[CustomQA] Clearing audio cache for length change');
-                        preloadedAudioMap.clear();
-                        // Save settings when length changes
-                        const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
-                        if (activeTab) {
-                            saveAllSettings(activeTab);
-                            // Preload all audio with new settings after a brief delay
-                            setTimeout(() => {
-                                preloadAllVisibleAudio();
-                            }, 50);
-                        }
+                        debouncedLengthChange(e.target.value);
                     });
                 }
                 if (vqaLengthSlider) {
                     vqaLengthSlider.addEventListener('input', (e) => {
                         syncLengthSliders(e.target);
-                        // Clear preloaded audio cache when length changes
-                        console.log('[CustomQA] Clearing audio cache for length change');
-                        preloadedAudioMap.clear();
-                        // Save settings when length changes
-                        const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
-                        if (activeTab) {
-                            saveAllSettings(activeTab);
-                            // Preload all audio with new settings after a brief delay
-                            setTimeout(() => {
-                                preloadAllVisibleAudio();
-                            }, 50);
-                        }
+                        debouncedLengthChange(e.target.value);
                     });
                 }
 
@@ -2148,41 +2520,43 @@
                 };
 
                 if (adSpeedSlider) {
-                    adSpeedSlider.addEventListener('input', (e) => {
-                        syncSpeedSliders(e.target);
-                        
-                        // Clear preloaded audio cache and regenerate with new speed
-                        console.log('[CustomQA] Clearing audio cache for speed change');
+                    // Debounce handler to only update storage/DB after dragging stops
+                    const debouncedSpeedChange = debounce((value) => {
+                        settings.set('speed', value);
                         preloadedAudioMap.clear();
-                        
-                        // Save all settings when speed changes
                         const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                         if (activeTab) {
                             saveAllSettings(activeTab);
-                            // Preload all audio with new settings after a brief delay
                             setTimeout(() => {
                                 preloadAllVisibleAudio();
                             }, 50);
                         }
+                    }, 300);
+                    
+                    adSpeedSlider.addEventListener('input', (e) => {
+                        // Instant UI sync, debounced storage update
+                        syncSpeedSliders(e.target);
+                        debouncedSpeedChange(e.target.value);
                     });
                 }
                 if (vqaSpeedSlider) {
-                    vqaSpeedSlider.addEventListener('input', (e) => {
-                        syncSpeedSliders(e.target);
-                        
-                        // Clear preloaded audio cache and regenerate with new speed
-                        console.log('[CustomQA] Clearing audio cache for speed change');
+                    // Debounce handler to only update storage/DB after dragging stops
+                    const debouncedSpeedChange = debounce((value) => {
+                        settings.set('speed', value);
                         preloadedAudioMap.clear();
-                        
-                        // Save all settings when speed changes
                         const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                         if (activeTab) {
                             saveAllSettings(activeTab);
-                            // Preload all audio with new settings after a brief delay
                             setTimeout(() => {
                                 preloadAllVisibleAudio();
                             }, 50);
                         }
+                    }, 300);
+                    
+                    vqaSpeedSlider.addEventListener('input', (e) => {
+                        // Instant UI sync, debounced storage update
+                        syncSpeedSliders(e.target);
+                        debouncedSpeedChange(e.target.value);
                     });
                 }
 
@@ -2228,6 +2602,8 @@
                             const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                             const otherTab = sidebar.querySelector('.tab-content[style*="display: none"]');
                             syncPresentationSettings(activeTab, otherTab);
+                            // Save to SettingsManager
+                            settings.set('gender', button.dataset.gender);
                             // When gender changes, immediately clear cache and preload with new gender
                             console.log('[CustomQA] Gender changed - clearing preloaded audio');
                             clearAudioCache(); // Clear cache so audio regenerates with new gender
@@ -2236,6 +2612,43 @@
                             if (activeTab) {
                                 saveAllSettings(activeTab);
                             }
+                        }
+                        
+                        // Save voice setting
+                        if (button.dataset.voice) {
+                            settings.set('voice', button.dataset.voice);
+                            // Save voice changes to database
+                            const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
+                            if (activeTab) {
+                                saveAllSettings(activeTab);
+                            }
+                        }
+                        
+                        // Save frequency setting
+                        if (button.dataset.frequency) {
+                            settings.set('adFrequency', button.dataset.frequency);
+                        }
+                        
+                        // Save emphasis setting
+                        if (button.dataset.emphasis) {
+                            settings.set('adEmphasis', button.dataset.emphasis);
+                        }
+                        
+                        // Save color preference
+                        if (button.dataset.color) {
+                            settings.set('adColor', button.dataset.color);
+                        }
+                        
+                        // Save narration style
+                        if (button.dataset.narration) {
+                            settings.set('adNarrationStyle', button.dataset.narration);
+                        }
+                        
+                        // Save pause during ad setting
+                        if (button.dataset.action === 'pause-on') {
+                            settings.set('adPauseDuringAd', true);
+                        } else if (button.dataset.action === 'pause-off') {
+                            settings.set('adPauseDuringAd', false);
                         }
                         
                         // Handle Audio Description toggle - stop playback if OFF is selected
@@ -2259,7 +2672,7 @@
                             }
                         }
                         
-                        // Save settings for ANY pill button click (frequency, emphasis, color, narration, pause, etc.)
+                        // Save settings for any pill button click (frequency, emphasis, color, narration, pause, etc.)
                         // Automatically save when any setting changes
                         const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                         if (activeTab && (button.dataset.frequency || button.dataset.emphasis || button.dataset.color || button.dataset.narration || button.dataset.action)) {
@@ -2275,84 +2688,123 @@
                     }
                 });
 
-                // Chat Speech-to-text
+                // Chat Speech-to-text with OpenAI Whisper
                 let isListeningChatMicButton = false;
-                let recognitionChatMicButton = null;
+                let mediaRecorder = null;
+                let audioChunks = [];
                 const chatMicButton = sidebar.querySelector('#chat-mic-button');
-                chatMicButton.addEventListener('click', () => {
+                const activationSound = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
+                
+                if (!chatMicButton) {
+                    console.warn('[CustomQA] Chat mic button not found');
+                } else {
+                    chatMicButton.addEventListener('click', async () => {
                     if (isListeningChatMicButton) {
-                        recognitionChatMicButton.stop();
+                        // Stop recording
+                        mediaRecorder.stop();
                         isListeningChatMicButton = false;
                         chatMicButton.classList.remove('listening');
-                        try {
-                            activationSound.play(); // Play sound on stop as well
-                        } catch (error) {
-                            console.error('Error playing activation sound:', error);
-                        }
-                    } else {
-                        recognitionChatMicButton = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-                        recognitionChatMicButton.lang = 'en-US';
-                        recognitionChatMicButton.interimResults = false;
-                        recognitionChatMicButton.maxAlternatives = 1;
-
-                        const activationSound = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
                         try {
                             activationSound.play();
                         } catch (error) {
                             console.error('Error playing activation sound:', error);
                         }
-
-                        recognitionChatMicButton.start();
-                        isListeningChatMicButton = true;
-                        chatMicButton.classList.add('listening');
-
-                        recognitionChatMicButton.onresult = (event) => {
-                            const chatInput = sidebar.querySelector('.chat-input');
-                            chatInput.value = event.results[0][0].transcript;
-                        };
-
-                        recognitionChatMicButton.onspeechend = () => {
-                            recognitionChatMicButton.stop();
-                            isListeningChatMicButton = false;
-                            chatMicButton.classList.remove('listening');
+                    } else {
+                        // Start recording
+                        try {
+                            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                            mediaRecorder = new MediaRecorder(stream);
+                            audioChunks = [];
+                            
+                            mediaRecorder.ondataavailable = (event) => {
+                                audioChunks.push(event.data);
+                            };
+                            
+                            mediaRecorder.onstop = async () => {
+                                try {
+                                    activationSound.play();
+                                } catch (error) {
+                                    console.error('Error playing activation sound:', error);
+                                }
+                                
+                                // Create audio blob from chunks
+                                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                                
+                                // Get Whisper settings from SettingsManager
+                                const whisperSettings = settings.getWhisperSettings();
+                                
+                                // Send to Whisper API via background script
+                                console.log('[CustomQA] Sending audio to Whisper API with settings:', whisperSettings);
+                                chrome.runtime.sendMessage({
+                                    type: 'CALL_WHISPER',
+                                    audioBlob: await new Promise(resolve => {
+                                        const reader = new FileReader();
+                                        reader.onloadend = () => resolve(reader.result);
+                                        reader.readAsDataURL(audioBlob);
+                                    }),
+                                    settings: whisperSettings
+                                }, (response) => {
+                                    if (response && response.success) {
+                                        const chatInput = sidebar.querySelector('.chat-input');
+                                        chatInput.value = response.text;
+                                        console.log('[CustomQA] Transcribed:', response.text);
+                                        
+                                        // Auto-play what the user just said
+                                        setTimeout(() => {
+                                            const textToSpeak = chatInput.value;
+                                            const gender = settings.get('gender', 'female');
+                                            
+                                            if (textToSpeak && textToSpeak.trim()) {
+                                                console.log('[CustomQA] Auto-playing recorded question...');
+                                                chrome.runtime.sendMessage({
+                                                    type: 'CALL_OPENAI_TTS',
+                                                    text: textToSpeak,
+                                                    gender: gender,
+                                                    speed: settings.get('speed', 50)
+                                                }, (ttsResponse) => {
+                                                    if (ttsResponse && ttsResponse.success) {
+                                                        const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
+                                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, chatSpeakerButton);
+                                                    } else {
+                                                        console.error('OpenAI TTS error:', ttsResponse?.error);
+                                                    }
+                                                });
+                                            }
+                                        }, 100);
+                                    } else {
+                                        console.error('Whisper API error:', response?.error);
+                                        alert('Error transcribing audio: ' + (response?.error || 'Unknown error'));
+                                    }
+                                });
+                            };
+                            
+                            // Clear previous chat input text so new transcription replaces it
+                            const chatInputToRecord = sidebar.querySelector('.chat-input');
+                            if (chatInputToRecord) {
+                                chatInputToRecord.value = '';
+                            }
+                            
+                            // Pause the video when starting to record
+                            if (video) {
+                                video.pause();
+                                console.log('[CustomQA] Video paused for microphone recording');
+                            }
+                            
+                            mediaRecorder.start();
+                            isListeningChatMicButton = true;
+                            chatMicButton.classList.add('listening');
                             try {
                                 activationSound.play();
                             } catch (error) {
                                 console.error('Error playing activation sound:', error);
                             }
-                            
-                            // Auto-play what the user just said
-                            setTimeout(() => {
-                                const chatInput = sidebar.querySelector('.chat-input');
-                                const textToSpeak = chatInput.value;
-                                const genderBtn = sidebar.querySelector('#vqa-gender-group .pill-button.active');
-                                const gender = genderBtn ? genderBtn.dataset.gender : 'female';
-                                
-                                if (textToSpeak && textToSpeak.trim()) {
-                                    console.log('[CustomQA] Auto-playing recorded question...');
-                                    chrome.runtime.sendMessage({
-                                        type: 'CALL_OPENAI_TTS',
-                                        text: textToSpeak,
-                                        gender: gender
-                                    }, (ttsResponse) => {
-                                        if (ttsResponse && ttsResponse.success) {
-                                            // Use chat speaker button instead of mic button for playback
-                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, chatSpeakerButton);
-                                        } else {
-                                            console.error('OpenAI TTS error:', ttsResponse?.error);
-                                        }
-                                    });
-                                }
-                            }, 200);
-                        };
-
-                        recognitionChatMicButton.onerror = (event) => {
-                            console.error('Speech recognition error:', event.error);
-                            isListeningChatMicButton = false;
-                            chatMicButton.classList.remove('listening');
-                        };
+                        } catch (error) {
+                            console.error('Error accessing microphone:', error);
+                            alert('Could not access microphone: ' + error.message);
+                        }
                     }
-                });
+                    });
+                }
 
                 // Chat Text-to-speech
                 const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
@@ -2373,8 +2825,7 @@
                     console.log('Chat speaker button clicked.');
                     const chatInput = sidebar.querySelector('.chat-input');
                     const textToSpeak = chatInput.value;
-                    const genderBtn = sidebar.querySelector('.pill-button[data-gender].active');
-                    const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                    const gender = settings.get('gender', 'female');
 
                     if (textToSpeak) {
                         const audioUrl = thisButton.getAttribute('data-audio-url');
@@ -2384,7 +2835,8 @@
                             chrome.runtime.sendMessage({
                                 type: 'CALL_OPENAI_TTS',
                                 text: textToSpeak,
-                                gender: gender
+                                gender: gender,
+                                speed: settings.get('speed', 50)
                             }, (ttsResponse) => {
                                 if (ttsResponse && ttsResponse.success) {
                                     playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
@@ -2465,26 +2917,52 @@
                     return (text || '').trim().split(/\s+/).filter(Boolean).length;
                 };
 
-                const trimToWordLimit = (text, maxWords) => {
+                const trimToWordLimit = (text, minWords, maxWords) => {
                     const words = (text || '').trim().split(/\s+/).filter(Boolean);
-                    if (words.length <= maxWords) {
+                    
+                    // If within acceptable range, return as-is
+                    if (words.length >= minWords && words.length <= maxWords) {
                         return (text || '').trim();
                     }
-
+                    
+                    // If too short, return as-is (don't truncate)
+                    if (words.length < minWords) {
+                        return (text || '').trim();
+                    }
+                    
+                    // Too long: try to find a sentence boundary within range
+                    const candidateTexts = [];
+                    
+                    // Collect candidates from maxWords down to minWords
+                    for (let i = maxWords; i >= minWords; i--) {
+                        candidateTexts.push(words.slice(0, i).join(' '));
+                    }
+                    
+                    // Look for a sentence ending (., !, or ?) within the acceptable range
+                    for (const candidate of candidateTexts) {
+                        if (/[.!?]\s*$/.test(candidate.trim())) {
+                            return candidate.trim();
+                        }
+                    }
+                    
+                    // No sentence boundary found: use maxWords and add a period
                     let trimmed = words.slice(0, maxWords).join(' ');
                     trimmed = trimmed.replace(/[;,]\s*$/, '.');
                     if (!/[.!?]$/.test(trimmed)) {
                         trimmed += '.';
                     }
-                    return trimmed;
+                    return trimmed.trim();
                 };
 
                 const normalizeAdDescriptions = (descriptions, targetWords) => {
-                    const maxWords = Math.max(8, (parseInt(targetWords, 10) || 25) + 5);
+                    const target = parseInt(targetWords, 10) || 25;
+                    const minWords = Math.max(8, target - 5);  // Allow 5 words less if needed
+                    const maxWords = Math.max(12, target + 5); // Allow 5 words more for complete sentences
+                    
                     return (descriptions || []).map((desc) => {
                         const raw = (desc?.description || '').trim();
                         const cleaned = raw.replace(/^\[\d+:\d{2}\s*-\s*\d+:\d{2}\]\s*/i, '');
-                        const normalized = trimToWordLimit(cleaned, maxWords);
+                        const normalized = trimToWordLimit(cleaned, minWords, maxWords);
                         return {
                             ...desc,
                             description: normalized,
@@ -2507,16 +2985,16 @@
                         const user = window.FirebaseAPI?.getCurrentUser();
                         if (user && window.FirebaseAPI) {
                             const currentSettings = {
-                                adVolume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 100),
-                                adSpeed: parseInt(sidebar.querySelector('#ad-speed-slider')?.value || 50),
-                                adGender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
-                                adVoice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'human',
-                                adLength: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
-                                adFrequency: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-frequency].active')?.dataset.frequency || 'sometimes',
-                                adEmphasis: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
-                                adColorPreference: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-color].active')?.dataset.color || 'on',
-                                adNarration: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-narration].active')?.dataset.narration || 'objective',
-                                adPauseDuringAd: sidebar.querySelector('#pause-ad-group .pill-button.active')?.dataset.action === 'pause-on'
+                                adVolume: settings.get('volume', 100),
+                                adSpeed: settings.get('speed', 50),
+                                adGender: settings.get('gender', 'female'),
+                                adVoice: settings.get('voice', 'human'),
+                                adLength: settings.get('adLength', 25),
+                                adFrequency: settings.get('adFrequency', 'sometimes'),
+                                adEmphasis: settings.get('adEmphasis', 'balanced'),
+                                adColorPreference: settings.get('adColor', 'on'),
+                                adNarration: settings.get('adNarrationStyle', 'objective'),
+                                adPauseDuringAd: settings.get('adPauseDuringAd', false)
                             };
                             await window.FirebaseAPI.saveSettings(user.uid, currentSettings);
                             console.log('[CustomQA] Settings saved on generate');
@@ -2566,8 +3044,8 @@
                         generateAdButton.disabled = false;
                         
                         const duration = video.duration;
-                        const frequency = sidebar.querySelector('.pill-button[data-frequency].active')?.dataset.frequency || 'sometimes';
-                        const interval = getFrequencyIntervalSeconds(frequency);
+                        const frequency = settings.get('adFrequency') || 'sometimes';
+                        const interval = settings.getFrequencyInterval(frequency);
                         const segments = buildAdSegments(duration, interval);
 
                         console.log('[AD] Generated time segments:', segments);
@@ -2584,29 +3062,7 @@
                             console.log('[AD] Segment planning complete. Sending URL + segments to Gemini...');
                             generateAdButton.textContent = 'Generating AD... (Click to cancel)';
 
-                            const customizations = {
-                                length: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
-                                frequency,
-                                intervalSeconds: interval,
-                                emphasis: sidebar.querySelector('.pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
-                                subjectiveness: sidebar.querySelector('.pill-button[data-narration].active')?.dataset.narration || 'objective',
-                                colorPreference: sidebar.querySelector('.pill-button[data-color].active')?.dataset.color || 'on',
-                                presentation: {
-                                    volume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 100),
-                                    speed: parseInt(sidebar.querySelector('#ad-speed-slider')?.value || 50),
-                                    voice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'human',
-                                    gender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female'
-                                },
-                                content: {
-                                    emphasis: sidebar.querySelector('.pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
-                                    narrationStyle: sidebar.querySelector('.pill-button[data-narration].active')?.dataset.narration || 'objective',
-                                    colorDescriptions: sidebar.querySelector('.pill-button[data-color].active')?.dataset.color || 'on'
-                                },
-                                setup: {
-                                    adEnabled: true,
-                                    pauseDuringAd: sidebar.querySelector('#pause-ad-group .pill-button.active')?.dataset.action === 'pause-on'
-                                }
-                            };
+                            const customizations = settings.getAdCustomizations();
 
                             const videoUrl = window.location.href;
 
@@ -2708,21 +3164,21 @@
                                         // Capture all current user settings as snapshot
                                         const customizations = {
                                             // AD settings
-                                            adVolume: parseInt(sidebar.querySelector('#ad-volume-slider')?.value || 100),
-                                            adSpeed: parseInt(sidebar.querySelector('#ad-speed-slider')?.value || 50),
-                                            adGender: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
-                                            adVoice: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-voice].active')?.dataset.voice || 'human',
-                                            adLength: parseInt(sidebar.querySelector('#length-slider')?.value || 25),
-                                            adFrequency: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-frequency].active')?.dataset.frequency || 'sometimes',
-                                            adEmphasis: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-emphasis].active')?.dataset.emphasis || 'balanced',
-                                            adColorPreference: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-color].active')?.dataset.color || 'on',
-                                            adNarrationStyle: sidebar.querySelector('#audio-descriptions-tab .pill-button[data-narration].active')?.dataset.narration || 'objective',
-                                            adPauseDuringAd: sidebar.querySelector('#pause-ad-group .pill-button.active')?.dataset.value === 'true',
+                                            adVolume: settings.get('volume', 100),
+                                            adSpeed: settings.get('speed', 50),
+                                            adGender: settings.get('gender', 'female'),
+                                            adVoice: settings.get('voice', 'human'),
+                                            adLength: settings.get('adLength', 25),
+                                            adFrequency: settings.get('adFrequency', 'sometimes'),
+                                            adEmphasis: settings.get('adEmphasis', 'balanced'),
+                                            adColorPreference: settings.get('adColor', 'on'),
+                                            adNarrationStyle: settings.get('adNarrationStyle', 'objective'),
+                                            adPauseDuringAd: settings.get('adPauseDuringAd', false),
                                             // VQA settings
-                                            vqaVolume: parseInt(sidebar.querySelector('#vqa-volume-slider')?.value || 50),
-                                            vqaSpeed: parseInt(sidebar.querySelector('#vqa-speed-slider')?.value || 50),
-                                            vqaGender: sidebar.querySelector('#vqa-tab .pill-button[data-gender].active')?.dataset.gender || 'female',
-                                            vqaLength: parseInt(sidebar.querySelector('#time-window-slider')?.value || 25)
+                                            vqaVolume: settings.get('volume', 100),
+                                            vqaSpeed: settings.get('speed', 50),
+                                            vqaGender: settings.get('gender', 'female'),
+                                            vqaLength: settings.get('vqaLength', 25)
                                         };
                                         const generatedAds = adSchedule.map(ad => ({
                                             timestamp_in_seconds: ad.timestamp,
@@ -2926,8 +3382,15 @@
                                 
                                 // Save restored settings to user profile
                                 try {
-                                    const allSettings = await getAllSettings(sidebar.querySelector('.tab-content:not([style*="display: none"])') || sidebar.querySelector('#audio-descriptions-tab'));
-                                    await window.DatabaseIntegration.saveSettings(user.uid, allSettings);
+                                    const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])') || sidebar.querySelector('#audio-descriptions-tab');
+                                    const allSettings = await getAllSettings(activeTab);
+                                    const isADTab = activeTab.id === 'audio-descriptions-tab';
+                                    
+                                    if (isADTab) {
+                                        await window.DatabaseIntegration.saveADSettings(allSettings);
+                                    } else {
+                                        await window.DatabaseIntegration.saveVQASettings(allSettings);
+                                    }
                                     console.log('[CustomQA] Restored settings saved to user profile');
                                 } catch (error) {
                                     console.error('[CustomQA] Error saving restored settings:', error);
@@ -2978,8 +3441,7 @@
                     metadataBadge.innerHTML = '<strong>Just Generated</strong> • Now';
                     adMessages.appendChild(metadataBadge);
                     
-                    const genderButton = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
-                    const gender = genderButton ? genderButton.dataset.gender : 'female';
+                    const gender = settings.get('gender', 'female');
                     
                     descriptions.forEach((desc, index) => {
                         const messageContainer = document.createElement('div');
@@ -3044,6 +3506,20 @@
                                 return;
                             }
                             
+                            // Prevent simultaneous audio playback: stop any currently playing audio from different button
+                            if (currentAudio && currentPlayingButton !== thisButton) {
+                                try {
+                                    currentAudio.stop();
+                                    currentAudio = null;
+                                    if (currentPlayingButton) {
+                                        setButtonToSpeakerIcon(currentPlayingButton);
+                                    }
+                                    currentPlayingButton = null;
+                                } catch (e) {
+                                    // Ignore error if audio is already stopped
+                                }
+                            }
+                            
                             const textToSpeak = thisButton.getAttribute('data-text');
                             const cachedAudioUrl = textToSpeak && preloadedAudioMap.has(textToSpeak) ? preloadedAudioMap.get(textToSpeak) : null;
                             const buttonAudioUrl = thisButton.getAttribute('data-audio-url');
@@ -3091,7 +3567,8 @@
                                 chrome.runtime.sendMessage({
                                     type: 'CALL_OPENAI_TTS',
                                     text: textToSpeak,
-                                    gender: gender
+                                    gender: gender,
+                                    speed: settings.get('speed', 50)
                                 }, (ttsResponse) => {
                                     if (ttsResponse && ttsResponse.success) {
                                         playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, delayMs);
@@ -3114,8 +3591,7 @@
                     setTimeout(() => {
                         console.log('[CustomQA] Preloading all newly displayed AD audio...');
                         const allAdButtons = sidebar.querySelectorAll('#ad-messages [id^="ad-speaker-btn"]');
-                        const genderBtn = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
-                        const gender = genderBtn ? genderBtn.dataset.gender : 'female';
+                        const gender = settings.get('gender', 'female');
                         
                         allAdButtons.forEach(btn => {
                             const text = btn.getAttribute('data-text');
@@ -3225,8 +3701,7 @@
                                     video.pause();
                                 }
                                 
-                                const genderBtnAD = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active');
-                                const gender = genderBtnAD ? genderBtnAD.dataset.gender : 'female';
+                                const gender = settings.get('gender', 'female');
                                 
                                 const speakerBtn = sidebar.querySelector(`#${nextAd.buttonId}`);
                                 if (!speakerBtn) {
@@ -3237,41 +3712,33 @@
                                 
                                 const audioUrl = speakerBtn.getAttribute('data-audio-url');
 
-                                if (audioUrl) {
-                                    playAudioFromDataUrl(audioUrl, speakerBtn, () => {
-                                        console.log('[AD] AD audio ended');
-                                        // Resume if we paused (first AD not at 0:00, or pause-during-ad is ON)
-                                        if (shouldPause) {
-                                            console.log('[AD] Resuming video');
-                                            video.play();
-                                        }
-                                    });
-                                } else {
-                                    chrome.runtime.sendMessage({
-                                        type: 'CALL_OPENAI_TTS',
-                                        text: nextAd.description,
-                                        gender: gender
-                                    }, (ttsResponse) => {
-                                        if (ttsResponse && ttsResponse.success) {
-                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn, () => {
-                                                console.log('[AD] AD audio ended');
-                                                // Resume if we paused
-                                                if (shouldPause) {
-                                                    console.log('[AD] Resuming video');
-                                                    video.play();
-                                                }
-                                            });
-                                        } else {
-                                            console.error('OpenAI TTS error:', ttsResponse?.error);
-                                            // Reset semaphore on error
-                                            isPlayingAd = false;
-                                            // Resume video on error if it was paused
+                                // Always regenerate TTS on auto-play to use CURRENT speed settings
+                                // Don't use cached audio because it was generated with old speed
+                                chrome.runtime.sendMessage({
+                                    type: 'CALL_OPENAI_TTS',
+                                    text: nextAd.description,
+                                    gender: gender,
+                                    speed: settings.get('speed', 50)
+                                }, (ttsResponse) => {
+                                    if (ttsResponse && ttsResponse.success) {
+                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn, () => {
+                                            console.log('[AD] AD audio ended');
+                                            // Resume if we paused
                                             if (shouldPause) {
+                                                console.log('[AD] Resuming video');
                                                 video.play();
                                             }
+                                        });
+                                    } else {
+                                        console.error('OpenAI TTS error:', ttsResponse?.error);
+                                        // Reset semaphore on error
+                                        isPlayingAd = false;
+                                        // Resume video on error if it was paused
+                                        if (shouldPause) {
+                                            video.play();
                                         }
-                                    });
-                                }
+                                    }
+                                });
                             }
                         }
                     });
@@ -3384,8 +3851,22 @@
                                     currentAudio.stop();
                                     return;
                                 }
-                                const genderBtnUser = sidebar.querySelector('#vqa-tab .pill-button[data-gender].active');
-                                const genderUser = genderBtnUser ? genderBtnUser.dataset.gender : 'female';
+                                
+                                // Prevent simultaneous audio playback: stop any currently playing audio from different button
+                                if (currentAudio && currentPlayingButton !== thisButton) {
+                                    try {
+                                        currentAudio.stop();
+                                        currentAudio = null;
+                                        if (currentPlayingButton) {
+                                            setButtonToSpeakerIcon(currentPlayingButton);
+                                        }
+                                        currentPlayingButton = null;
+                                    } catch (e) {
+                                        // Ignore error if audio is already stopped
+                                    }
+                                }
+                                
+                                const genderUser = settings.get('gender', 'female');
                                 const textToSpeak = thisButton.getAttribute('data-text');
                                 const audioUrl = thisButton.getAttribute('data-audio-url');
 
@@ -3395,7 +3876,8 @@
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
                                         text: textToSpeak,
-                                        gender: genderUser
+                                        gender: genderUser,
+                                        speed: settings.get('speed', 50)
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
                                             playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
@@ -3419,8 +3901,7 @@
                             userMessageContainer.appendChild(userMessage);
                             chatMessages.appendChild(userMessageContainer);
 
-                            const genderBtnUser = sidebar.querySelector('#vqa-tab .pill-button[data-gender].active');
-                            const genderUser = genderBtnUser ? genderBtnUser.dataset.gender : 'female';
+                            const genderUser = settings.get('gender', 'female');
                             preloadAndStoreAudio(question, userSpeakerBtn, genderUser);
 
                             chatInput.value = '';
@@ -3463,11 +3944,24 @@
                                     currentAudio.stop();
                                     return;
                                 }
+                                
+                                // Prevent simultaneous audio playback: stop any currently playing audio from different button
+                                if (currentAudio && currentPlayingButton !== thisButton) {
+                                    try {
+                                        currentAudio.stop();
+                                        currentAudio = null;
+                                        if (currentPlayingButton) {
+                                            setButtonToSpeakerIcon(currentPlayingButton);
+                                        }
+                                        currentPlayingButton = null;
+                                    } catch (e) {
+                                        // Ignore error if audio is already stopped
+                                    }
+                                }
 
                                 const textToSpeak = aiTextSpan.textContent;
                                 const audioUrl = thisButton.getAttribute('data-audio-url');
-                                const genderBtnAI = sidebar.querySelector('#vqa-tab .pill-button[data-gender].active');
-                                const genderAI = genderBtnAI ? genderBtnAI.dataset.gender : 'female';
+                                const genderAI = settings.get('gender', 'female');
 
                                 if (audioUrl) {
                                     playAudioFromDataUrl(audioUrl, thisButton);
@@ -3475,7 +3969,8 @@
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
                                         text: textToSpeak,
-                                        gender: genderAI
+                                        gender: genderAI,
+                                        speed: settings.get('speed', 50)
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
                                             playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
@@ -3504,8 +3999,7 @@
                                 const askedAtTime = video.currentTime;
                                 const askedAtTimestamp = formatTime(askedAtTime);
 
-                                const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
-                                const wordCount = vqaLengthSlider ? vqaLengthSlider.value : 20;
+                                const wordCount = settings.get('vqaLength', 25);
 
                                 const sendGeminiRequest = async (timestampSeconds) => {
                                     try {
@@ -3576,7 +4070,7 @@ Look at the video content around the timestamp ${timeLabel}. Please provide a cl
                                     // Try both directions for each offset: -3s/+3s, then -9s/+9s, then -30s/+30s
                                     const fallbackOffsets = [{offset: 3, direction: -1}, {offset: 3, direction: 1}, {offset: 9, direction: -1}, {offset: 9, direction: 1}, {offset: 30, direction: -1}, {offset: 30, direction: 1}];
                                     
-                                    aiTextSpan.textContent = `Analyzing video at ${formatTime(initialTimestamp)}...`;
+                                    aiTextSpan.textContent = `Analyzing at ${formatTime(initialTimestamp)}...`;
                                     let response = await sendGeminiRequest(initialTimestamp);
                                     aiTextSpan.textContent = 'Processing...';
 
@@ -3590,7 +4084,7 @@ Look at the video content around the timestamp ${timeLabel}. Please provide a cl
                                             const beforeTimestamp = Math.max(0, initialTimestamp - offset);
                                             const afterTimestamp = Math.min(initialTimestamp + offset, video.duration);
                                             
-                                            aiTextSpan.textContent = `Not enough context. Checking frames at ${formatTime(beforeTimestamp)} and ${formatTime(afterTimestamp)}...`;
+                                            aiTextSpan.textContent = `Analyzing at ${formatTime(beforeTimestamp)} and ${formatTime(afterTimestamp)}...`;
                                             
                                             // Try both directions in parallel
                                             const [responseBefore, responseAfter] = await Promise.all([
@@ -3646,14 +4140,14 @@ Look at the video content around the timestamp ${timeLabel}. Please provide a cl
                                             await window.DatabaseIntegration.saveGeneratedVQA(videoUrl, video.duration, customizations, messages);
                                         }
                                         
-                                        const genderBtnResp = sidebar.querySelector('.pill-button[data-gender].active');
-                                        const genderResp = genderBtnResp ? genderBtnResp.dataset.gender : 'female';
+                                        const genderResp = settings.get('gender', 'female');
                                         preloadAndStoreAudio(response.text, speakerBtn, genderResp);
 
                                         chrome.runtime.sendMessage({
                                             type: 'CALL_OPENAI_TTS',
                                             text: response.text,
-                                            gender: genderResp
+                                            gender: genderResp,
+                                            speed: settings.get('speed', 50)
                                         }, (ttsResponse) => {
                                             if (ttsResponse && ttsResponse.success) {
                                                 playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn);
@@ -3681,21 +4175,33 @@ Look at the video content around the timestamp ${timeLabel}. Please provide a cl
         return false;
     };
 
-    const init = () => {
-        newVideoLoaded();
+    const init = async () => {
+        try {
+            console.log('[CustomQA] Starting initialization...');
+            await settings.init();
+            console.log('[CustomQA] Settings initialized, calling newVideoLoaded()');
+            newVideoLoaded();
+            console.log('[CustomQA] newVideoLoaded() completed');
+        } catch (err) {
+            console.error('[CustomQA] Initialization error:', err);
+        }
     };
 
     // Initial load
+    console.log('[CustomQA] Loading extension...');
     init();
 
     // Handle navigations in YouTube (which is a single-page app)
     document.addEventListener("yt-navigate-finish", () => {
+        console.log('[CustomQA] YouTube navigation detected');
         // Remove old sidebar if it exists
         const oldSidebar = document.getElementById("custom-qa-sidebar");
         if (oldSidebar) {
+            console.log('[CustomQA] Removing old sidebar');
             oldSidebar.remove();
         }
         // Try to inject sidebar on new page
+        console.log('[CustomQA] Reinitializing on new page');
         init();
     });
 
