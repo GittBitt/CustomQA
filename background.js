@@ -1,6 +1,6 @@
 console.log('Background script loaded - VERSION 4 (Backend)');
 
-const BACKEND_URL = 'https://customqa.onrender.com'; // Change to your deployed backend URL
+const BACKEND_URL = 'https://customqa.onrender.com'; // Render production backend
 const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A',
   projectId: 'customqa-cf40b'
@@ -165,7 +165,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         result = await callBackend('/api/call-gemini', {
           text: prompt,
-          frames: request.segments || [],
+          frames: [],
           options: {
             videoUrl: resolvedVideoUrl,
             videoDuration: request.videoDuration,
