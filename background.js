@@ -126,11 +126,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     (async () => {
       try {
-        const audioDataUrl = await getOpenAI_TTS_API(request.text, request.gender);
+        const audioDataUrl = await getOpenAI_TTS_API(request.text, request.gender, request.speed);
         sendResponse({ success: true, audioDataUrl: audioDataUrl, text: request.text });
       } catch (error) {
         console.error('[BG] Error:', error);
         sendResponse({ success: false, error: error.message, text: request.text });
+      }
+    })();
+    
+    return true;
+  } else if (request.type === 'CALL_WHISPER') {
+    console.log('[BG] Processing CALL_WHISPER');
+    
+    (async () => {
+      try {
+        const transcribedText = await callWhisperAPI(request.audioBlob, request.settings);
+        sendResponse({ success: true, text: transcribedText });
+      } catch (error) {
+        console.error('[BG] Whisper Error:', error);
+        sendResponse({ success: false, error: error.message });
       }
     })();
     
@@ -170,7 +184,7 @@ function resolveVideoUrlForAdRequest(request, sender) {
   return senderTabUrl || requestVideoUrl || '';
 }
 
-async function getOpenAI_TTS_API(text, gender) {
+async function getOpenAI_TTS_API(text, gender, speed = 1.0) {
   let apiKey = '';
   try {
     console.log('[OpenAI TTS] Fetching API key...');
@@ -205,7 +219,22 @@ async function getOpenAI_TTS_API(text, gender) {
         voice = 'alloy'; // Explicitly use alloy for androgynous
     }
 
-    console.log(`[OpenAI TTS] Calling API with text: "${text.substring(0, 50)}..." and voice: "${voice}"`);
+    // Normalize speed from UI slider range (0-100) to OpenAI range (0.25-4.0)
+    // UI: 50 = normal speed (1.0), 0 = slowest (0.25), 100 = fastest (4.0)
+    // Using piecewise linear mapping because 1.0 is NOT the midpoint
+    let normalizedSpeed = 1.0;
+    if (typeof speed === 'number') {
+        if (speed <= 50) {
+            // 0-50 maps to 0.25-1.0
+            normalizedSpeed = 0.25 + (speed / 50) * (1.0 - 0.25);
+        } else {
+            // 50-100 maps to 1.0-4.0
+            normalizedSpeed = 1.0 + ((speed - 50) / 50) * (4.0 - 1.0);
+        }
+        normalizedSpeed = Math.max(0.25, Math.min(4.0, normalizedSpeed)); // Clamp to valid range
+    }
+
+    console.log(`[OpenAI TTS] Calling API with text: "${text.substring(0, 50)}..." voice: "${voice}" speed: ${normalizedSpeed}`);
     const response = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
       headers: {
@@ -216,6 +245,7 @@ async function getOpenAI_TTS_API(text, gender) {
         model: 'tts-1',
         input: text,
         voice: voice,
+        speed: normalizedSpeed
       }),
     });
 
@@ -243,7 +273,94 @@ async function getOpenAI_TTS_API(text, gender) {
     });
   } catch (error) {
     console.error("[OpenAI TTS] Error calling OpenAI TTS API:", error.message);
+    if (String(error?.message || '').includes('Failed to fetch')) {
+      throw new Error('[OpenAI TTS] Error: Failed to fetch. Check extension host permissions for https://api.openai.com/*, network connectivity, and whether the API key is valid and active.');
+    }
     throw new Error(`[OpenAI TTS] Error: ${error.message}`);
+  }
+}
+
+async function callWhisperAPI(audioDataUrl, whisperSettings = {}) {
+  let apiKey = '';
+  try {
+    console.log('[Whisper API] Fetching API key...');
+    const envResponse = await fetch(chrome.runtime.getURL('.env'));
+    
+    if (!envResponse.ok) {
+      throw new Error(`Failed to fetch .env: ${envResponse.statusText}`);
+    }
+    
+    const envText = await envResponse.text();
+    const lines = envText.split('\n');
+    const apiKeyLine = lines.find(line => line.trim().startsWith('OPENAI_API_KEY='));
+    
+    if (!apiKeyLine) {
+      throw new Error('OPENAI_API_KEY not found in .env');
+    }
+    
+    apiKey = apiKeyLine.trim().split('OPENAI_API_KEY=')[1].trim();
+    
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY is empty');
+    }
+    
+    console.log(`[Whisper API] Using API Key: ...${apiKey.slice(-4)}`);
+    
+    // Convert data URL to blob
+    const response = await fetch(audioDataUrl);
+    const audioBlob = await response.blob();
+    
+    // Create FormData for multipart/form-data request
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'audio.wav');
+    formData.append('model', 'whisper-1');
+    
+    // Add optional parameters if provided
+    if (whisperSettings.language) {
+      formData.append('language', whisperSettings.language);
+    }
+    if (whisperSettings.temperature !== undefined) {
+      formData.append('temperature', whisperSettings.temperature);
+    }
+    if (whisperSettings.prompt) {
+      formData.append('prompt', whisperSettings.prompt);
+    }
+    if (whisperSettings.responseFormat) {
+      formData.append('response_format', whisperSettings.responseFormat);
+    }
+    
+    console.log('[Whisper API] Calling API with settings:', {
+      language: whisperSettings.language || 'auto',
+      temperature: whisperSettings.temperature,
+      prompt: whisperSettings.prompt || 'none',
+      responseFormat: whisperSettings.responseFormat || 'json'
+    });
+    
+    const apiResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: formData
+    });
+    
+    console.log('[Whisper API] Response status:', apiResponse.status);
+    
+    if (!apiResponse.ok) {
+      const errorData = await apiResponse.json();
+      console.error('[Whisper API] API error:', errorData);
+      throw new Error(`Whisper API error: ${errorData.error?.message || apiResponse.statusText}`);
+    }
+    
+    const data = await apiResponse.json();
+    const transcribedText = data.text || '';
+    
+    console.log('[Whisper API] Successfully transcribed:', transcribedText);
+    return transcribedText;
+    
+  } catch (error) {
+    console.error("[Whisper API] Error calling Whisper API:", error.message);
+    throw new Error(`[Whisper API] Error: ${error.message}`);
   }
 }
 
@@ -333,20 +450,9 @@ CUSTOM GUIDELINES SPECIFIED BY USER:
   - Emphasis: ${emphasis_guidelines[customizations.emphasis] || emphasis_guidelines['balanced']}
   - Style: ${subjectiveness_guidelines[customizations.subjectiveness] || subjectiveness_guidelines['objective']}
 
-  PRESENTATION CUSTOMIZATION SELECTED BY USER:
-  - Voice type preference: ${customizations.presentation?.voice || 'human'}
-  - Voice gender preference: ${customizations.presentation?.gender || 'female'}
-  - Playback speed preference: ${customizations.presentation?.speed ?? 50}
-  - Playback volume preference: ${customizations.presentation?.volume ?? 100}
-
   CONTENT CUSTOMIZATION SELECTED BY USER:
-  - Emphasis setting: ${customizations.content?.emphasis || customizations.emphasis || 'balanced'}
-  - Narration style setting: ${customizations.content?.narrationStyle || customizations.subjectiveness || 'objective'}
   - Color descriptions setting: ${customizations.content?.colorDescriptions || customizations.colorPreference || 'on'}
-
-  CUSTOMIZATION SETUPS SELECTED BY USER:
   - Audio Description enabled: ${customizations.setup?.adEnabled === false ? 'off' : 'on'}
-  - Pause during AD playback: ${customizations.setup?.pauseDuringAd ? 'on' : 'off'}
 `;
 
     if (customizations.colorPreference === 'off') {
@@ -423,13 +529,20 @@ async function callGeminiAPI(prompt, frames, options = {}) {
     const envText = await envResponse.text();
     console.log('[Gemini API] Raw .env content length:', envText.length);
     const lines = envText.split('\n');
-    const apiKeyLine = lines.find(line => line.trim().startsWith('API_KEY='));
-    
+    const geminiApiKeyLine = lines.find(line => line.trim().startsWith('GEMINI_API_KEY='));
+    const legacyApiKeyLine = lines.find(line => line.trim().startsWith('API_KEY='));
+    const apiKeyLine = geminiApiKeyLine || legacyApiKeyLine;
+
     if (!apiKeyLine) {
-      throw new Error('API_KEY not found in .env');
+      throw new Error('GEMINI_API_KEY (or API_KEY) not found in .env');
     }
-    
-    apiKey = apiKeyLine.trim().split('API_KEY=')[1].trim();
+
+    if (geminiApiKeyLine) {
+      apiKey = geminiApiKeyLine.trim().split('GEMINI_API_KEY=')[1].trim();
+    } else {
+      apiKey = legacyApiKeyLine.trim().split('API_KEY=')[1].trim();
+      console.warn('[Gemini API] Using legacy API_KEY from .env. Consider renaming to GEMINI_API_KEY.');
+    }
     
     if (!apiKey) {
       throw new Error('API_KEY is empty');
@@ -519,15 +632,9 @@ async function callGeminiAPI(prompt, frames, options = {}) {
 
     if (!response.ok) {
       console.error('[Gemini API] Bad response status');
-      try {
-        const errorData = JSON.parse(responseText);
-        const errorMsg = errorData.error?.message || response.statusText;
-        console.error('[Gemini API] Parsed error:', errorMsg);
-        throw new Error(`API error: ${response.status} - ${errorMsg}`);
-      } catch (e) {
-        console.error('[Gemini API] Could not parse error response');
-        throw new Error(`API error: ${response.status} - ${responseText}`);
-      }
+      const errorMsg = formatGeminiErrorMessage(response.status, response.statusText, responseText);
+      console.error('[Gemini API] Parsed error:', errorMsg);
+      throw new Error(errorMsg);
     }
 
     try {
@@ -556,6 +663,30 @@ async function callGeminiAPI(prompt, frames, options = {}) {
     console.error("[Gemini API] Error calling Gemini API:", error.message);
     throw new Error(`[Gemini API] Error: ${error.message}`);
   }
+}
+
+function formatGeminiErrorMessage(status, statusText, responseText) {
+  let parsed = null;
+  try {
+    parsed = JSON.parse(responseText);
+  } catch (parseError) {
+    console.error('[Gemini API] Could not parse error response as JSON');
+    return `API error: ${status} - ${responseText || statusText}`;
+  }
+
+  const apiError = parsed?.error || {};
+  const errorMessage = apiError.message || statusText || 'Unknown API error';
+  const details = Array.isArray(apiError.details) ? apiError.details : [];
+  const errorInfo = details.find(detail => detail?.['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo');
+  const reason = errorInfo?.reason;
+  const service = errorInfo?.metadata?.service;
+  const consumer = errorInfo?.metadata?.consumer;
+
+  if (reason === 'API_KEY_SERVICE_BLOCKED') {
+    return `API error: ${status} - Gemini API key is blocked for ${service || 'generativelanguage.googleapis.com'} (reason: API_KEY_SERVICE_BLOCKED${consumer ? `, ${consumer}` : ''}). Enable the Generative Language API for this project and allow it in your API key restrictions.`;
+  }
+
+  return `API error: ${status} - ${errorMessage}`;
 }
 
 // Firebase Auth Handlers - these need to be handled in content script context
