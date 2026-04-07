@@ -73,6 +73,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })();
     
     return true;
+  } else if (request.type === 'CALL_GEMINI_VQA') {
+    const resolvedVideoUrl = resolveVideoUrlForAdRequest(request, sender);
+    console.log('[BG] Processing CALL_GEMINI_VQA');
+    console.log('[BG] Video URL from sender tab:', sender?.tab?.url);
+    console.log('[BG] Resolved video URL:', resolvedVideoUrl);
+    console.log('[BG] VQA Timestamp:', request.timestamp);
+    
+    (async () => {
+      try {
+        console.log('[BG] Calling Gemini for VQA with URL at timestamp');
+        const result = await callGeminiAPI(request.prompt, null, {
+          videoUrl: resolvedVideoUrl,
+          timestamp: request.timestamp,
+          taskType: 'vqa'
+        });
+        console.log('[BG] Sending success response', result?.substring?.(0, 100));
+        sendResponse({ success: true, text: result });
+      } catch (error) {
+        console.error('[BG] Error:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    
+    return true;
   } else if (request.type === 'CALL_GEMINI_VQA_MULTIFRAME') {
     console.log('[BG] Processing CALL_GEMINI_VQA_MULTIFRAME');
     console.log('[BG] Frames received:', request.frames?.length);
