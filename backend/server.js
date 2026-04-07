@@ -35,6 +35,16 @@ app.use(cors({
 // Microphone audio is sent as base64 data URLs; increase body limit to avoid 413 payload errors.
 app.use(express.json({ limit: '25mb' }));
 
+// Request logger to confirm traffic is reaching this deployed service.
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const durationMs = Date.now() - start;
+    console.log(`[REQ] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${durationMs}ms)`);
+  });
+  next();
+});
+
 // ==================== MIDDLEWARE ====================
 
 // Verify Firebase ID token via REST API
@@ -261,6 +271,45 @@ function extractFirstJsonPayload(text) {
   return withoutFences;
 }
 
+// Best-effort repair for truncated JSON by closing unterminated arrays/objects.
+function repairTruncatedJson(jsonString) {
+  if (!jsonString || typeof jsonString !== 'string') return jsonString;
+
+  let inString = false;
+  let escaped = false;
+  const stack = [];
+
+  for (let i = 0; i < jsonString.length; i++) {
+    const ch = jsonString[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if ((ch === '}' || ch === ']') && stack.length > 0) stack.pop();
+  }
+
+  let repaired = jsonString;
+  if (inString) repaired += '"';
+  while (stack.length > 0) repaired += stack.pop();
+  return repaired;
+}
+
 // ==================== FIRESTORE ENDPOINTS ====================
 
 // Get user settings
@@ -443,7 +492,7 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       generationConfig: {
         temperature: isAdRequest ? 0.4 : 0.7,
         topP: 0.95,
-        maxOutputTokens: isAdRequest ? 4096 : 1024,
+        maxOutputTokens: isAdRequest ? 8192 : 1024,
         ...(useJsonMime && isAdRequest ? { responseMimeType: 'application/json' } : {})
       }
     });
@@ -512,6 +561,23 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       console.log('[Gemini] Valid JSON response, entries:', normalized.length);
       res.json({ success: true, result: JSON.stringify(normalized) });
     } catch (parseError) {
+      // Retry parse once with best-effort repair for truncated model output.
+      try {
+        const repaired = repairTruncatedJson(jsonContent || '');
+        const reparsed = JSON.parse(repaired);
+        const normalized = Array.isArray(reparsed)
+          ? reparsed
+          : (reparsed?.audio_descriptions || reparsed?.VideoMetadata?.audio_descriptions || []);
+
+        if (Array.isArray(normalized)) {
+          console.warn('[Gemini] Parsed repaired JSON response, entries:', normalized.length);
+          res.json({ success: true, result: JSON.stringify(normalized) });
+          return;
+        }
+      } catch (repairError) {
+        console.error('[Gemini] JSON repair failed:', repairError.message);
+      }
+
       console.error('[Gemini] Failed to parse JSON:', parseError.message);
       console.error('[Gemini] Content being parsed:', (jsonContent || '').substring(0, 300));
       res.status(400).json({
