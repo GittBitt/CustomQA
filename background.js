@@ -165,7 +165,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         result = await callBackend('/api/call-gemini', {
           text: prompt,
-          frames: request.segments || [],
+          frames: [],
           options: {
             videoUrl: resolvedVideoUrl,
             videoDuration: request.videoDuration,

@@ -23,7 +23,7 @@ app.use(cors({
   origin: (origin, callback) => {
     if (!origin || origin.startsWith('chrome-extension://')) {
       callback(null, true);
-    } else if (origin === 'http://localhost:3000') {
+    } else if (origin === 'https://customqa.onrender.com') {
       callback(null, true); // Allow localhost for testing
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -34,6 +34,16 @@ app.use(cors({
 
 // Microphone audio is sent as base64 data URLs; increase body limit to avoid 413 payload errors.
 app.use(express.json({ limit: '25mb' }));
+
+// Request logger to confirm traffic is reaching this deployed service.
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const durationMs = Date.now() - start;
+    console.log(`[REQ] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${durationMs}ms)`);
+  });
+  next();
+});
 
 // ==================== MIDDLEWARE ====================
 
@@ -55,7 +65,7 @@ async function verifyToken(req, res, next) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Referer': 'http://localhost:3000',  // Required by Firebase
+          'Referer': 'https://customqa.onrender.com',  // Required by Firebase
           'User-Agent': 'CustomQA-Backend/1.0'  // Identify as backend
         },
         body: JSON.stringify({ idToken: token })
@@ -104,7 +114,7 @@ async function firestoreCall(method, path, body = null, idToken) {
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${idToken}`,
-      'Referer': 'http://localhost:3000',
+      'Referer': 'https://customqa.onrender.com',
       'User-Agent': 'CustomQA-Backend/1.0'
     }
   };
@@ -259,6 +269,45 @@ function extractFirstJsonPayload(text) {
   }
 
   return withoutFences;
+}
+
+// Best-effort repair for truncated JSON by closing unterminated arrays/objects.
+function repairTruncatedJson(jsonString) {
+  if (!jsonString || typeof jsonString !== 'string') return jsonString;
+
+  let inString = false;
+  let escaped = false;
+  const stack = [];
+
+  for (let i = 0; i < jsonString.length; i++) {
+    const ch = jsonString[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if ((ch === '}' || ch === ']') && stack.length > 0) stack.pop();
+  }
+
+  let repaired = jsonString;
+  if (inString) repaired += '"';
+  while (stack.length > 0) repaired += stack.pop();
+  return repaired;
 }
 
 // ==================== FIRESTORE ENDPOINTS ====================
@@ -418,11 +467,16 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       console.log('[Gemini] Video URL provided:', videoUrl);
     }
     
-    const parts = [];
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return res.status(400).json({ success: false, error: 'Missing text prompt' });
+    }
 
-    // Restore URL-grounded video context for Gemini when client passes a YouTube URL.
+    // For AD generation, send only video URL grounding + text prompt.
+    // Do not send segment objects as frames; those are already encoded in prompt text.
+    const textOnlyParts = [{ text }];
+    const urlGroundedParts = [...textOnlyParts];
     if (videoUrl && /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(videoUrl)) {
-      parts.push({
+      urlGroundedParts.unshift({
         fileData: {
           mimeType: 'video/x-youtube',
           fileUri: videoUrl
@@ -430,49 +484,44 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       });
     }
 
-    if (text) parts.push({ text });
-    
-    if (frames && frames.length > 0) {
-      for (const frame of frames) {
-        // Check if frame is a string (base64 image) or object (data like segments)
-        if (typeof frame === 'string') {
-          // It's a base64-encoded image
-          parts.push({
-            inlineData: {
-              mimeType: 'image/jpeg',
-              data: frame.replace('data:image/jpeg;base64,', '')
-            }
-          });
-        } else if (typeof frame === 'object') {
-          // It's a data object (like segments) - include as text
-          parts.push({ text: JSON.stringify(frame) });
-        }
-      }
-    }
-    
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GOOGLE_GEMINI_API_KEY}`;
     console.log('[Gemini] Request URL:', geminiUrl.split('?')[0] + '?key=***');
-    
-    const response = await fetch(
-      geminiUrl,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Referer': 'http://localhost:3000',
-          'User-Agent': 'CustomQA-Backend/1.0'
-        },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: {
-            temperature: isAdRequest ? 0.4 : 0.7,
-            topP: 0.95,
-            maxOutputTokens: isAdRequest ? 4096 : 1024,
-            ...(isAdRequest ? { responseMimeType: 'application/json' } : {})
-          }
-        })
+
+    const buildRequestBody = (parts, useJsonMime) => ({
+      contents: [{ parts }],
+      generationConfig: {
+        temperature: isAdRequest ? 0.4 : 0.7,
+        topP: 0.95,
+        maxOutputTokens: isAdRequest ? 8192 : 1024,
+        ...(useJsonMime && isAdRequest ? { responseMimeType: 'application/json' } : {})
       }
-    );
+    });
+
+    let response = await fetch(geminiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(buildRequestBody(urlGroundedParts, true))
+    });
+
+    // Some requests reject URL-grounding args. Retry as text-only to keep AD generation working.
+    if (!response.ok && response.status === 400) {
+      const firstError = await response.text();
+      if (firstError.includes('INVALID_ARGUMENT')) {
+        console.warn('[Gemini] URL-grounded request rejected; retrying text-only');
+        response = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(buildRequestBody(textOnlyParts, false))
+        });
+      } else {
+        console.error('[Gemini] Error response:', firstError);
+        throw new Error(`Gemini API error: 400 - ${firstError}`);
+      }
+    }
 
     console.log('[Gemini] Response status:', response.status);
 
@@ -512,6 +561,23 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       console.log('[Gemini] Valid JSON response, entries:', normalized.length);
       res.json({ success: true, result: JSON.stringify(normalized) });
     } catch (parseError) {
+      // Retry parse once with best-effort repair for truncated model output.
+      try {
+        const repaired = repairTruncatedJson(jsonContent || '');
+        const reparsed = JSON.parse(repaired);
+        const normalized = Array.isArray(reparsed)
+          ? reparsed
+          : (reparsed?.audio_descriptions || reparsed?.VideoMetadata?.audio_descriptions || []);
+
+        if (Array.isArray(normalized)) {
+          console.warn('[Gemini] Parsed repaired JSON response, entries:', normalized.length);
+          res.json({ success: true, result: JSON.stringify(normalized) });
+          return;
+        }
+      } catch (repairError) {
+        console.error('[Gemini] JSON repair failed:', repairError.message);
+      }
+
       console.error('[Gemini] Failed to parse JSON:', parseError.message);
       console.error('[Gemini] Content being parsed:', (jsonContent || '').substring(0, 300));
       res.status(400).json({

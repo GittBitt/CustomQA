@@ -7,7 +7,7 @@ try {
 
   let currentUser = null;
   let idToken = null;
-  const BACKEND_URL = 'http://localhost:3000'; // Change to your deployed backend URL
+  const BACKEND_URL = 'https://customqa.onrender.com';
 
   // Helper function to persist auth state
   const saveAuthState = async () => {
