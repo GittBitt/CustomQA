@@ -12,45 +12,6 @@ const SecretsManager = (() => {
 
     return {
         /**
-         * Initialize secrets from .env file (one-time setup)
-         * Call this once when extension is first installed
-         */
-        async initializeFromEnv() {
-            try {
-                const response = await fetch(chrome.runtime.getURL('.env'));
-                const envText = await response.text();
-                const secrets = {};
-                
-                const lines = envText.split('\n');
-                lines.forEach(line => {
-                    if (line.trim() && !line.trim().startsWith('#')) {
-                        const [key, value] = line.trim().split('=');
-                        if (key === 'API_KEY') {
-                            secrets[API_KEYS.GEMINI] = value.trim();
-                        } else if (key === 'OPENAI_API_KEY') {
-                            secrets[API_KEYS.OPENAI] = value.trim();
-                        }
-                    }
-                });
-                
-                // Store in chrome.storage (more secure than accessible resources)
-                return new Promise((resolve, reject) => {
-                    chrome.storage.local.set({ [STORAGE_KEY]: secrets }, () => {
-                        if (chrome.runtime.lastError) {
-                            reject(chrome.runtime.lastError);
-                        } else {
-                            console.log('[SecretsManager] Secrets initialized securely');
-                            resolve(true);
-                        }
-                    });
-                });
-            } catch (error) {
-                console.error('[SecretsManager] Error initializing secrets:', error);
-                throw error;
-            }
-        },
-
-        /**
          * Get API key by name
          */
         async getApiKey(keyName) {

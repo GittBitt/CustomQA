@@ -40,7 +40,6 @@
                 "firebase-rest-api.js",
                 "auth-ui.js",
                 "database-integration.js",
-                ".env",
                 "assets/activation.mp3"
             ],
             "matches": ["https://*.youtube.com/*"]
