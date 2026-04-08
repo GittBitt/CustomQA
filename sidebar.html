@@ -1,11 +1,12 @@
-<div class="sidebar-header">
-    <div class="sidebar-title-group">
-        <span class="sidebar-star">✦</span>
-        <div class="sidebar-title">
-            <span class="sidebar-title-main">CustomQA</span>
-            <span class="sidebar-title-sub">Sidebar Plugin</span>
+<div role="group" aria-label="CustomQA Sidebar Plugin">
+    <div class="sidebar-header">
+        <div class="sidebar-title-group">
+            <span class="sidebar-star">✦</span>
+            <div class="sidebar-title">
+                <span class="sidebar-title-main" style="font-weight: 700;"><strong>CustomQA</strong></span>
+                <span class="sidebar-title-sub">Sidebar Plugin</span>
+            </div>
         </div>
-    </div>
     <div class="sidebar-header-actions">
             <div class="button-group">
                 <button class="vqa-badge" aria-label="Visual Question Answer">INFO <svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 0 24 24" width="18" fill="white"><path d="M0 0h24v24H0z" fill="none"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg></button>
@@ -21,6 +22,9 @@
 </div>
 
 <div class="tab-content" id="audio-descriptions-tab" role="tabpanel">
+    <!-- Aria-live region for button state announcements -->
+    <div id="button-state-announcer" aria-live="polite" aria-atomic="true" class="sr-only" style="position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden;"></div>
+    
     <div class="section">
         <div class="section-title" tabindex="0">AUDIO DESCRIPTIONS</div>
         <div class="chatbox" id="ad-display-box">
@@ -86,7 +90,7 @@
                 <button class="pill-button" data-frequency="often" aria-label="Often (generates an audio description every 15 seconds)" aria-pressed="false">OFTEN</button>
                 <button class="pill-button" data-frequency="very-often" aria-label="Very Often (generates an audio description every 8 seconds)" aria-pressed="false">VERY OFTEN</button>
             </div>
-            <div class="frequency-helper" id="frequency-helper" style="font-size: 13px; color: #555; margin-top: 8px; font-weight: 600; opacity: 1; transition: opacity 0.3s ease;">audio description every 30 seconds</div>
+            <div class="frequency-helper" id="frequency-helper" style="font-size: 13px; color: #555; margin-top: 8px; font-weight: 600; opacity: 1; transition: opacity 0.3s ease;">currently playing: audio description every 30 seconds</div>
         </div>
         
         <div style="margin-bottom: 16px;">
@@ -178,9 +182,6 @@
 
     <div class="section">
         <div class="section-title" tabindex="0">PRESENTATION CUSTOMIZATION</div>
-
-        <div class="slider-container">
-            <div class="slider-label">Volume:</div>
             <div class="slider-wrapper">
                 <svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-1hl1abi" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02M5 9v6h4l5 5V4L9 9z"></path></svg>
                 <input type="range" min="0" max="200" value="100" class="slider" id="vqa-volume-slider" aria-label="Visual Question Answer Volume">
@@ -225,6 +226,7 @@
             <input type="range" min="0" max="100" value="25" class="slider" id="vqa-length-slider" aria-label="Visual Question Answer Word Length">
         </div>
     </div>
+</div>
 </div>
 <script>
 // Update frequency helper text when frequency buttons change with fade effect

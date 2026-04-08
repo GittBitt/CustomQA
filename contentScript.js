@@ -159,12 +159,31 @@
     };
     // ======================================================
 
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const gainNode = audioContext.createGain();
-    gainNode.connect(audioContext.destination);
+    // Try to create AudioContext with error handling
+    let audioContext = null;
+    let gainNode = null;
+    
+    try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        gainNode = audioContext.createGain();
+        gainNode.connect(audioContext.destination);
+    } catch (error) {
+        console.warn('[CustomQA] AudioContext initialization failed:', error);
+    }
 
     let currentVolume = 1; // Default volume
     const preloadedAudioMap = new Map();
+
+    // Prevent audio ducking by monitoring and restoring gainNode value
+    const preventAudioDucking = setInterval(() => {
+        try {
+            if (gainNode && audioContext && gainNode.gain.value !== currentVolume && currentVolume > 0) {
+                gainNode.gain.setValueAtTime(currentVolume, audioContext.currentTime);
+            }
+        } catch (e) {
+            // Silently handle errors in audio context
+        }
+    }, 100);
 
     const speakerSvg = `<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"/><path d="M3 9v6h4l5 5V4L7 9zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77"/></svg>`;
     const stopSvg = `<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"/><path d="M6 6h12v12H6z"/></svg>`;
@@ -247,6 +266,12 @@
         };
 
         const playAudioFromDataUrl = async (dataUrl, buttonElement, onendedCallback = null, delayMs = 0) => {
+            // Check if audioContext is available
+            if (!audioContext || !gainNode) {
+                console.warn('[CustomQA] AudioContext not initialized, skipping audio playback');
+                return null;
+            }
+            
             if (currentAudio) {
                 try {
                     currentAudio.onended = null; // Prevent old onended from firing
@@ -267,6 +292,12 @@
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
                 const playSound = () => {
+                    // Ensure audio context and gain node are available
+                    if (!audioContext || !gainNode) {
+                        console.warn('[CustomQA] AudioContext not available, cannot play audio');
+                        return;
+                    }
+                    
                     const source = audioContext.createBufferSource();
                     source.buffer = audioBuffer;
                     source.connect(gainNode);
@@ -2746,6 +2777,21 @@
                         // Save frequency setting
                         if (button.dataset.frequency) {
                             settings.set('adFrequency', button.dataset.frequency);
+                            // Update frequency helper text with fade animation
+                            const frequencyMap = {
+                                'rarely': 'currently playing: audio description every 60 seconds',
+                                'sometimes': 'currently playing: audio description every 30 seconds',
+                                'often': 'currently playing: audio description every 15 seconds',
+                                'very-often': 'currently playing: audio description every 8 seconds'
+                            };
+                            const frequencyHelper = sidebar.querySelector('#frequency-helper');
+                            if (frequencyHelper && frequencyMap[button.dataset.frequency]) {
+                                frequencyHelper.style.opacity = '0';
+                                setTimeout(() => {
+                                    frequencyHelper.textContent = frequencyMap[button.dataset.frequency];
+                                    frequencyHelper.style.opacity = '1';
+                                }, 150);
+                            }
                         }
                         
                         // Save emphasis setting
@@ -3191,8 +3237,15 @@
 
                         isAdGenerationRunning = true;
                         cancelAdGeneration = false;
-                        generateAdButton.textContent = 'Preparing segments... (Click to cancel)';
+                        generateAdButton.textContent = 'Generating audio description... (Click to cancel)';
+                        generateAdButton.setAttribute('aria-label', 'Generating audio description, click to cancel');
                         generateAdButton.disabled = false;
+                        
+                        // Announce to VoiceOver via aria-live region
+                        const announcer = sidebar.querySelector('#button-state-announcer');
+                        if (announcer) {
+                            announcer.textContent = 'Generating audio description, click to cancel';
+                        }
                         
                         const duration = video.duration;
                         const frequency = settings.get('adFrequency') || 'sometimes';
@@ -3211,7 +3264,6 @@
                             }
 
                             console.log('[AD] Segment planning complete. Sending URL + segments to Gemini...');
-                            generateAdButton.textContent = 'Generating AD... (Click to cancel)';
 
                             const customizations = settings.getAdCustomizations();
 
@@ -3239,7 +3291,7 @@
 
                             if (response && response.success) {
                                 console.log('AD Generation successful:', response.text);
-                                generateAdButton.textContent = 'Processing descriptions... (Click to cancel)';
+                                generateAdButton.textContent = 'Generating audio description... (Click to cancel)';
                                 // Strip markdown and parse - more robust cleanup
                                 let jsonString = response.text.trim();
                                 // Remove markdown code blocks
@@ -3392,7 +3444,14 @@
                             isAdGenerationRunning = false;
                             cancelAdGeneration = false;
                             generateAdButton.textContent = 'REGENERATE AD';
+                            generateAdButton.setAttribute('aria-label', 'Regenerate Audio Description');
                             generateAdButton.disabled = false;
+                            
+                            // Announce to VoiceOver via aria-live region
+                            const announcer = sidebar.querySelector('#button-state-announcer');
+                            if (announcer) {
+                                announcer.textContent = 'Audio description generation complete. Ready to regenerate.';
+                            }
                         }
                     });
                 }
@@ -4095,7 +4154,12 @@
                             const aiTextSpan = document.createElement('span');
                             aiTextSpan.tabIndex = 0;
                             aiTextSpan.textContent = 'Thinking...';
+                            aiTextSpan.setAttribute('aria-live', 'assertive');
+                            aiTextSpan.setAttribute('aria-atomic', 'true');
                             aiMessage.appendChild(aiTextSpan);
+                            
+                            // Scroll response bubble into view
+                            aiMessageContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
                             const speakerBtn = document.createElement('button');
                             setButtonToSpeakerIcon(speakerBtn);
