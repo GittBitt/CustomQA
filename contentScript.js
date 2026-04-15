@@ -392,8 +392,6 @@
             if (secondary) {
                 const sidebar = document.createElement("div");
                 sidebar.id = "custom-qa-sidebar";
-                sidebar.style.width = "100%";
-                sidebar.style.height = "auto";
                 sidebar.style.backgroundColor = "#f2f2f2";
                 sidebar.style.borderRadius = "8px";
                 sidebar.style.padding = "16px";
@@ -4000,7 +3998,12 @@
                 // Make sidebar focusable
                 sidebar.setAttribute('tabindex', '0');
 
-                secondary.prepend(sidebar);
+                const related = secondary.querySelector('#related');
+                if (related) {
+                    related.prepend(sidebar);
+                } else {
+                    secondary.prepend(sidebar);
+                }
 
                 // Add timestamp functionality for CHAT tab
                 const vqaSendButton = sidebar.querySelector('#vqa-send-button');
