@@ -12,6 +12,15 @@ const EXTENSION_ID = process.env.EXTENSION_ID;
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
 const API_KEY = process.env.FIREBASE_API_KEY;
 
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_MAX_OUTPUT_TOKENS = Number.parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS || '4096', 10);
+const GEMINI_AD_MAX_OUTPUT_TOKENS = Number.parseInt(process.env.GEMINI_AD_MAX_OUTPUT_TOKENS || '8192', 10);
+
+function clampTokens(value, fallback) {
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.max(256, Math.min(65536, value));
+}
+
 // Initialize OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -484,7 +493,7 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       });
     }
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GOOGLE_GEMINI_API_KEY}`;
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.GOOGLE_GEMINI_API_KEY}`;
     console.log('[Gemini] Request URL:', geminiUrl.split('?')[0] + '?key=***');
 
     const buildRequestBody = (parts, useJsonMime) => ({
@@ -492,7 +501,9 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       generationConfig: {
         temperature: isAdRequest ? 0.4 : 0.7,
         topP: 0.95,
-        maxOutputTokens: isAdRequest ? 8192 : 1024,
+        maxOutputTokens: isAdRequest
+          ? clampTokens(GEMINI_AD_MAX_OUTPUT_TOKENS, 8192)
+          : clampTokens(GEMINI_MAX_OUTPUT_TOKENS, 4096),
         ...(useJsonMime && isAdRequest ? { responseMimeType: 'application/json' } : {})
       }
     });

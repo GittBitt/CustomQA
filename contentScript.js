@@ -1018,58 +1018,75 @@
                     async loadGeneratedVQA(userId, videoId) {
                         if (!idToken_FBAuth) return null;
                         try {
-                            // Load the "current" VQA document directly
-                            const response = await fetch(
-                                `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/current?key=${window.firebaseConfig.apiKey}`,
+                            const basePath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa`;
+                            const listResponse = await fetch(
+                                `https://firestore.googleapis.com/v1/${basePath}?pageSize=200&key=${window.firebaseConfig.apiKey}`,
                                 {
                                     method: 'GET',
                                     headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
                                 }
                             );
-                            
-                            if (response.status === 404) {
-                                console.log('[CustomQA] No saved VQA document found (404)');
+
+                            if (listResponse.status === 404) {
+                                console.log('[CustomQA] No saved VQA documents found (404)');
                                 return null;
                             }
-                            if (!response.ok) {
-                                console.error('Load VQA error:', response.status, response.statusText);
+                            if (!listResponse.ok) {
+                                console.error('Load VQA list error:', listResponse.status, listResponse.statusText);
                                 return null;
                             }
-                            
-                            const data = await response.json();
-                            const fields = data.fields || {};
-                            
-                            // Parse customizations
-                            let customizations = {};
-                            if (fields.customizations?.stringValue) {
-                                try {
-                                    customizations = JSON.parse(fields.customizations.stringValue);
-                                } catch (e) {
-                                    console.warn('Failed to parse customizations:', e);
-                                }
-                            }
-                            
-                            // Parse messages - they're stored as array of stringValues
-                            let messages = [];
-                            if (fields.messages?.arrayValue?.values) {
-                                messages = fields.messages.arrayValue.values.map(val => {
-                                    if (val.stringValue) {
+
+                            const listData = await listResponse.json();
+                            const docs = listData.documents || [];
+                            const entries = docs
+                                .filter(doc => doc.name?.split('/').pop() !== 'current')
+                                .map((doc) => {
+                                    const fields = doc.fields || {};
+                                    let customizations = {};
+                                    if (fields.customizations?.stringValue) {
                                         try {
-                                            return JSON.parse(val.stringValue);
+                                            customizations = JSON.parse(fields.customizations.stringValue);
                                         } catch (e) {
-                                            console.warn('Failed to parse message:', e);
-                                            return { role: 'assistant', content: val.stringValue };
+                                            console.warn('Failed to parse VQA customizations:', e);
                                         }
                                     }
-                                    return val;
-                                });
+
+                                    let messages = [];
+                                    if (fields.messages?.arrayValue?.values) {
+                                        messages = fields.messages.arrayValue.values.map(val => {
+                                            if (val.stringValue) {
+                                                try {
+                                                    return JSON.parse(val.stringValue);
+                                                } catch (e) {
+                                                    console.warn('Failed to parse VQA message:', e);
+                                                    return { role: 'assistant', content: val.stringValue };
+                                                }
+                                            }
+                                            return val;
+                                        });
+                                    }
+
+                                    return {
+                                        docId: doc.name?.split('/').pop() || '',
+                                        customizations,
+                                        messages,
+                                        timestamp: Number(fields.timestamp?.integerValue || 0),
+                                        createdAt: fields.createdAt?.timestampValue || new Date().toISOString()
+                                    };
+                                })
+                                .filter(entry => Array.isArray(entry.messages) && entry.messages.length > 0)
+                                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+                            if (!entries.length) {
+                                return null;
                             }
-                            
+
                             return {
-                                customizations: customizations,
-                                messages: messages,
-                                timestamp: fields.timestamp?.integerValue || Date.now(),
-                                createdAt: fields.createdAt?.timestampValue || new Date().toISOString()
+                                entries,
+                                // Backward-compatible flattened view for older rendering paths.
+                                messages: entries.flatMap(entry => entry.messages),
+                                createdAt: entries[0].createdAt,
+                                timestamp: entries[0].timestamp
                             };
                         } catch (error) {
                             console.error('Error loading VQA:', error);
@@ -1804,7 +1821,12 @@
                                 metadataBadge.innerHTML = `<strong>Saved Descriptions</strong> • ${formatDateHelper(previousAD.createdAt)}`;
                                 adMessages.appendChild(metadataBadge);
                                 
-                                const descriptions = previousAD.generatedAds;
+                                const rawDescriptions = previousAD.generatedAds;
+                                const descriptions = mergeConsecutiveSimilarAds(rawDescriptions.map((desc, index) => ({
+                                    timestamp: Number(desc.timestamp_in_seconds || 0),
+                                    endTimestamp: Number(rawDescriptions[index + 1]?.timestamp_in_seconds || (video ? video.duration : 0)),
+                                    description: (desc.description || '').trim()
+                                })));
                                 
                                 descriptions.forEach((desc, index) => {
                                     const messageContainer = document.createElement('div');
@@ -1813,8 +1835,8 @@
                                     messageContainer.style.gap = '8px';
                                     messageContainer.style.marginBottom = '12px';
                                     
-                                    const currentTs = desc.timestamp_in_seconds;
-                                    const nextTs = descriptions[index + 1]?.timestamp_in_seconds || (video ? video.duration : 0);
+                                    const currentTs = desc.timestamp;
+                                    const nextTs = Number.isFinite(desc.endTimestamp) ? desc.endTimestamp : (descriptions[index + 1]?.timestamp || (video ? video.duration : 0));
                                     const tsRange = `${formatTimeHelper(currentTs)} - ${formatTimeHelper(nextTs)}`;
                                     
                                     const bubble = document.createElement('div');
@@ -1918,7 +1940,8 @@
                                 
                                 // Populate adSchedule with loaded ADs for timeupdate auto-play
                                 adSchedule = descriptions.map((desc, index) => ({
-                                    timestamp: desc.timestamp_in_seconds,
+                                    timestamp: desc.timestamp,
+                                    endTimestamp: desc.endTimestamp,
                                     description: desc.description,
                                     played: true, // Mark all previously loaded ADs as already played to avoid auto-playing old content
                                     buttonId: `ad-speaker-btn-loaded-${index}`
@@ -1994,9 +2017,14 @@
                         const previousVQA = await window.DatabaseIntegration.loadGeneratedVQA(videoUrl);
                         console.log('[CustomQA] VQA Load Result:', previousVQA ? 'SUCCESS' : 'NO DATA', previousVQA);
                         
-                        if (previousVQA && previousVQA.messages && previousVQA.messages.length > 0) {
+                        const hasVqaEntries = Array.isArray(previousVQA?.entries) && previousVQA.entries.length > 0;
+                        const hasVqaMessages = Array.isArray(previousVQA?.messages) && previousVQA.messages.length > 0;
+                        if (previousVQA && (hasVqaEntries || hasVqaMessages)) {
                             hasExistingVQA = true;
-                            console.log('[CustomQA] Displaying', previousVQA.messages.length, 'VQA message(s)');
+                            const messageCount = hasVqaEntries
+                                ? previousVQA.entries.reduce((sum, entry) => sum + ((entry.messages || []).length), 0)
+                                : previousVQA.messages.length;
+                            console.log('[CustomQA] Displaying', messageCount, 'VQA message(s)');
                             
                             const vqaMessages = sidebar.querySelector('.vqa-sub-tab-content .chat-messages');
                             console.log('[CustomQA] VQA container found:', !!vqaMessages);
@@ -2004,7 +2032,7 @@
                             if (vqaMessages) {
                                 vqaMessages.innerHTML = '';
                                 
-                                // Add metadata badge showing when this was created
+                                // Add metadata badge showing history scope
                                 const metadataBadge = document.createElement('div');
                                 metadataBadge.style.background = '#e3f2fd';
                                 metadataBadge.style.border = '1px solid #2196f3';
@@ -2013,14 +2041,22 @@
                                 metadataBadge.style.marginBottom = '12px';
                                 metadataBadge.style.fontSize = '12px';
                                 metadataBadge.style.color = '#1565c0';
-                                metadataBadge.innerHTML = `<strong>Saved Q&A</strong> • ${formatDateHelper(previousVQA.createdAt)}`;
+                                const entryCount = Array.isArray(previousVQA.entries) ? previousVQA.entries.length : 1;
+                                metadataBadge.innerHTML = `<strong>Saved Q&A History</strong> • ${entryCount} session${entryCount === 1 ? '' : 's'}`;
                                 vqaMessages.appendChild(metadataBadge);
-                                
+
+                                const allMessages = Array.isArray(previousVQA.entries)
+                                    ? previousVQA.entries
+                                        .slice()
+                                        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+                                        .flatMap(entry => Array.isArray(entry.messages) ? entry.messages : [])
+                                    : (Array.isArray(previousVQA.messages) ? previousVQA.messages : []);
+
                                 // Separate questions from answers
                                 const questions = [];
                                 const answers = [];
-                                
-                                previousVQA.messages.forEach(msg => {
+
+                                allMessages.forEach(msg => {
                                     // Parse message if it's a stringified object
                                     let msgContent = msg;
                                     if (typeof msg === 'string') {
@@ -2194,7 +2230,7 @@
                     vqaMessages.appendChild(aiMessageContainer);
                 });
                 
-                console.log('[CustomQA] VQA display complete - Questions:', questions.length, 'Answers:', answers.length);
+                                console.log('[CustomQA] VQA display complete - Questions:', questions.length, 'Answers:', answers.length, 'Total:', allMessages.length);
                 
                 // Auto-preload all displayed VQA audio
                 setTimeout(() => {
@@ -3166,6 +3202,58 @@
                     });
                 };
 
+                const normalizeDescriptionKey = (text) => {
+                    return (text || '')
+                        .toLowerCase()
+                        .replace(/[^a-z0-9\s]/g, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                };
+
+                const isNoChangeDescription = (text) => {
+                    const normalized = normalizeDescriptionKey(text);
+                    return /no (major )?(visible )?change|no scene change|scene continues|nothing (notable )?(changes|happens)|little to no change/.test(normalized);
+                };
+
+                const mergeConsecutiveSimilarAds = (items) => {
+                    const source = Array.isArray(items) ? [...items] : [];
+                    if (source.length <= 1) return source;
+
+                    source.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+                    const merged = [];
+
+                    source.forEach((item) => {
+                        const current = {
+                            ...item,
+                            timestamp: Number(item.timestamp || 0),
+                            endTimestamp: Number(item.endTimestamp || item.timestamp || 0),
+                            description: (item.description || '').trim()
+                        };
+
+                        const prev = merged[merged.length - 1];
+                        if (!prev) {
+                            merged.push(current);
+                            return;
+                        }
+
+                        const prevKey = normalizeDescriptionKey(prev.description);
+                        const currKey = normalizeDescriptionKey(current.description);
+                        const bothNoChange = isNoChangeDescription(prev.description) && isNoChangeDescription(current.description);
+                        const sameText = prevKey && prevKey === currKey;
+
+                        if (sameText || bothNoChange) {
+                            prev.endTimestamp = Math.max(prev.endTimestamp || prev.timestamp, current.endTimestamp || current.timestamp);
+                            if ((current.description || '').length > (prev.description || '').length) {
+                                prev.description = current.description;
+                            }
+                        } else {
+                            merged.push(current);
+                        }
+                    });
+
+                    return merged;
+                };
+
                 let isAdGenerationRunning = false;
                 let cancelAdGeneration = false;
                 const generateAdButton = sidebar.querySelector('#generate-ad-button');
@@ -3321,22 +3409,23 @@
                                 }
 
                                 const defaultDescription = 'Scene continues with no major visible change in this section.';
-                                adSchedule = segments.map((segment, index) => {
+                                let normalizedSchedule = segments.map((segment, index) => {
                                     const modelEntry = descriptions[index] || {};
                                     const modelText = (modelEntry.description || '').trim();
-                                    const modelTimestamp = Number(
-                                        modelEntry.timestamp_in_seconds ??
-                                        ((modelEntry.timestamp_ms ?? 0) / 1000)
-                                    );
                                     return {
-                                        // Prefer model timestamp when valid; fall back to planned segment start.
-                                        timestamp: Number.isFinite(modelTimestamp) ? modelTimestamp : segment.start_in_seconds,
-                                        endTimestamp: segment.end_in_seconds,
+                                        // Use planned segment timeline as source of truth for autoplay stability.
+                                        timestamp: Number(segment.start_in_seconds || 0),
+                                        endTimestamp: Number(segment.end_in_seconds || segment.start_in_seconds || 0),
                                         description: modelText || defaultDescription,
-                                        played: false,
-                                        buttonId: `ad-speaker-btn-${index}`
+                                        played: false
                                     };
                                 });
+
+                                normalizedSchedule = mergeConsecutiveSimilarAds(normalizedSchedule);
+                                adSchedule = normalizedSchedule.map((ad, index) => ({
+                                    ...ad,
+                                    buttonId: `ad-speaker-btn-${index}`
+                                }));
                                 adScheduleVideoUrl = window.location.href; // Track video for this schedule
 
                                 generateAdButton.textContent = 'Preloading audio...';
@@ -3491,21 +3580,11 @@
                                 }
 
                                 restoreSettingsButton.disabled = true;
-                                restoreSettingsButton.textContent = 'Searching...';
+                                restoreSettingsButton.textContent = 'Restoring...';
 
-                                const result = await window.DatabaseIntegration.getMostRecentVideoSettings(window.location.href);
-                                
-                                // Use default settings if no previous settings found
-                                let settings = DEFAULT_SETTINGS;
-                                let videoTitle = 'Default Settings';
-                                
-                                if (result && result.settings) {
-                                    settings = result.settings;
-                                    videoTitle = result.videoTitle || 'Previous Video';
-                                    console.log('[CustomQA] Restoring settings from:', videoTitle);
-                                } else {
-                                    console.log('[CustomQA] No previous video settings found, applying default settings');
-                                }
+                                // Restore always means return to original defaults.
+                                const defaultSettings = { ...DEFAULT_SETTINGS };
+                                console.log('[CustomQA] Applying original default settings');
 
                                 // Restore presentation customization
                                 const adSliders = {
@@ -3514,9 +3593,9 @@
                                     length: sidebar.querySelector('#length-slider')
                                 };
 
-                                if (settings.adVolume && adSliders.volume) adSliders.volume.value = settings.adVolume;
-                                if (settings.adSpeed && adSliders.speed) adSliders.speed.value = settings.adSpeed;
-                                if (settings.adLength && adSliders.length) adSliders.length.value = settings.adLength;
+                                if (defaultSettings.adVolume && adSliders.volume) adSliders.volume.value = defaultSettings.adVolume;
+                                if (defaultSettings.adSpeed && adSliders.speed) adSliders.speed.value = defaultSettings.adSpeed;
+                                if (defaultSettings.adLength && adSliders.length) adSliders.length.value = defaultSettings.adLength;
 
                                 const setButtonByDataAttr = (selector, attrName, attrValue) => {
                                     const buttons = sidebar.querySelectorAll(selector);
@@ -3532,40 +3611,40 @@
                                 };
 
                                 // Restore Gender and Voice
-                                if (settings.adGender) {
-                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-gender]', 'gender', settings.adGender);
+                                if (defaultSettings.adGender) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-gender]', 'gender', defaultSettings.adGender);
                                 }
-                                if (settings.adVoice) {
-                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-voice]', 'voice', settings.adVoice);
+                                if (defaultSettings.adVoice) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-voice]', 'voice', defaultSettings.adVoice);
                                 }
 
                                 // Restore content customization
-                                if (settings.adFrequency) {
-                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-frequency]', 'frequency', settings.adFrequency);
+                                if (defaultSettings.adFrequency) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-frequency]', 'frequency', defaultSettings.adFrequency);
                                 }
-                                if (settings.adEmphasis) {
-                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-emphasis]', 'emphasis', settings.adEmphasis);
+                                if (defaultSettings.adEmphasis) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-emphasis]', 'emphasis', defaultSettings.adEmphasis);
                                 }
-                                if (settings.adColorPreference) {
-                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-color]', 'color', settings.adColorPreference);
+                                if (defaultSettings.adColorPreference) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-color]', 'color', defaultSettings.adColorPreference);
                                 }
-                                if (settings.adNarration) {
-                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-narration]', 'narration', settings.adNarration);
+                                if (defaultSettings.adNarrationStyle) {
+                                    setButtonByDataAttr('#audio-descriptions-tab .pill-button[data-narration]', 'narration', defaultSettings.adNarrationStyle);
                                 }
 
                                 // Restore customization setups
-                                if (settings.adPauseDuringAd !== undefined) {
-                                    const pauseAction = settings.adPauseDuringAd ? 'pause-on' : 'pause-off';
+                                if (defaultSettings.adPauseDuringAd !== undefined) {
+                                    const pauseAction = defaultSettings.adPauseDuringAd ? 'pause-on' : 'pause-off';
                                     setButtonByDataAttr('#pause-ad-group .pill-button', 'action', pauseAction);
                                 }
 
                                 // Restore Audio Description ON/OFF status if available
-                                if (settings.adEnabled !== undefined) {
+                                if (defaultSettings.adEnabled !== undefined) {
                                     const adToggleButtons = sidebar.querySelectorAll('#audio-descriptions-tab > .section:nth-child(3) .button-group .pill-button');
                                     if (adToggleButtons.length >= 2) {
                                         const onBtn = adToggleButtons[0];
                                         const offBtn = adToggleButtons[1];
-                                        if (settings.adEnabled) {
+                                        if (defaultSettings.adEnabled) {
                                             onBtn.classList.add('active');
                                             onBtn.setAttribute('aria-pressed', 'true');
                                             offBtn.classList.remove('active');
@@ -3586,38 +3665,44 @@
                                     length: sidebar.querySelector('#vqa-length-slider')
                                 };
 
-                                if (settings.vqaVolume !== undefined && vqaSliders.volume) vqaSliders.volume.value = settings.vqaVolume;
-                                if (settings.vqaSpeed !== undefined && vqaSliders.speed) vqaSliders.speed.value = settings.vqaSpeed;
-                                if (settings.vqaLength !== undefined && vqaSliders.length) {
-                                    vqaSliders.length.value = settings.vqaLength;
+                                if (defaultSettings.vqaVolume !== undefined && vqaSliders.volume) vqaSliders.volume.value = defaultSettings.vqaVolume;
+                                if (defaultSettings.vqaSpeed !== undefined && vqaSliders.speed) vqaSliders.speed.value = defaultSettings.vqaSpeed;
+                                if (defaultSettings.vqaLength !== undefined && vqaSliders.length) {
+                                    vqaSliders.length.value = defaultSettings.vqaLength;
                                     const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
-                                    if (vqaLengthValue) vqaLengthValue.textContent = settings.vqaLength;
+                                    if (vqaLengthValue) vqaLengthValue.textContent = defaultSettings.vqaLength;
                                 }
 
                                 // Restore VQA Gender and Voice if available
-                                if (settings.vqaGender) {
-                                    setButtonByDataAttr('#vqa-tab .pill-button[data-gender]', 'gender', settings.vqaGender);
+                                if (defaultSettings.vqaGender) {
+                                    setButtonByDataAttr('#vqa-tab .pill-button[data-gender]', 'gender', defaultSettings.vqaGender);
                                 }
-                                if (settings.vqaVoice) {
-                                    setButtonByDataAttr('#vqa-tab .pill-button[data-voice]', 'voice', settings.vqaVoice);
+                                if (defaultSettings.vqaVoice) {
+                                    setButtonByDataAttr('#vqa-tab .pill-button[data-voice]', 'voice', defaultSettings.vqaVoice);
                                 }
 
-                                console.log('[CustomQA] Settings restored successfully from:', videoTitle);
-                                
-                                // Save restored settings to user profile
+                                // Sync runtime settings manager so behavior updates immediately.
+                                settings.set('volume', defaultSettings.adVolume);
+                                settings.set('speed', defaultSettings.adSpeed);
+                                settings.set('voice', defaultSettings.adVoice);
+                                settings.set('gender', defaultSettings.adGender);
+                                settings.set('adLength', defaultSettings.adLength);
+                                settings.set('adFrequency', defaultSettings.adFrequency);
+                                settings.set('adEmphasis', defaultSettings.adEmphasis);
+                                settings.set('adColor', defaultSettings.adColorPreference);
+                                settings.set('adNarrationStyle', defaultSettings.adNarrationStyle);
+                                settings.set('adPauseDuringAd', defaultSettings.adPauseDuringAd);
+                                settings.set('vqaLength', defaultSettings.vqaLength);
+
+                                console.log('[CustomQA] Default settings applied to UI and runtime');
+
+                                // Persist defaults to user profile for both AD and VQA settings.
                                 try {
-                                    const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])') || sidebar.querySelector('#audio-descriptions-tab');
-                                    const allSettings = await getAllSettings(activeTab);
-                                    const isADTab = activeTab.id === 'audio-descriptions-tab';
-                                    
-                                    if (isADTab) {
-                                        await window.DatabaseIntegration.saveADSettings(allSettings);
-                                    } else {
-                                        await window.DatabaseIntegration.saveVQASettings(allSettings);
-                                    }
-                                    console.log('[CustomQA] Restored settings saved to user profile');
+                                    await window.DatabaseIntegration.saveADSettings(defaultSettings);
+                                    await window.DatabaseIntegration.saveVQASettings(defaultSettings);
+                                    console.log('[CustomQA] Default settings persisted to user profile');
                                 } catch (error) {
-                                    console.error('[CustomQA] Error saving restored settings:', error);
+                                    console.error('[CustomQA] Error persisting default settings:', error);
                                 }
                                 
                                 restoreSettingsButton.textContent = 'Settings Restored!';
@@ -3675,7 +3760,7 @@
                         messageContainer.style.marginBottom = '12px';
                         
                         const currentTs = desc.timestamp;
-                        const nextTs = descriptions[index + 1]?.timestamp || video.duration;
+                        const nextTs = Number.isFinite(desc.endTimestamp) ? desc.endTimestamp : (descriptions[index + 1]?.timestamp || video.duration);
                         const tsRange = `${formatTime(currentTs)} - ${formatTime(nextTs)}`;
                         
                         const bubble = document.createElement('div');
