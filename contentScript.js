@@ -879,6 +879,20 @@
                     async loadGeneratedAD(userId, videoId) {
                         if (!idToken_FBAuth) return null;
                         try {
+                            const parseStoredArray = (field) => {
+                                if (!field?.arrayValue?.values) return [];
+                                return field.arrayValue.values.map((val) => {
+                                    if (val.stringValue) {
+                                        try {
+                                            return JSON.parse(val.stringValue);
+                                        } catch {
+                                            return { timestamp_in_seconds: 0, description: val.stringValue };
+                                        }
+                                    }
+                                    return val;
+                                });
+                            };
+
                             // Load the "current" AD document directly
                             const response = await fetch(
                                 `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/audioDescriptions/current?key=${window.firebaseConfig.apiKey}`,
@@ -889,8 +903,42 @@
                             );
                             
                             if (response.status === 404) {
-                                console.log('[CustomQA] No saved AD document found (404)');
-                                return null;
+                                // Backward-compatible fallback: older builds stored ADs directly on videos/{videoId}.
+                                const legacyResponse = await fetch(
+                                    `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}?key=${window.firebaseConfig.apiKey}`,
+                                    {
+                                        method: 'GET',
+                                        headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                    }
+                                );
+
+                                if (!legacyResponse.ok) {
+                                    console.log('[CustomQA] No saved AD document found (current + legacy)');
+                                    return null;
+                                }
+
+                                const legacyData = await legacyResponse.json();
+                                const legacyFields = legacyData.fields || {};
+                                const generatedAds = parseStoredArray(legacyFields.generatedAds);
+                                if (!generatedAds.length) {
+                                    return null;
+                                }
+
+                                let customizations = {};
+                                if (legacyFields.customizations?.stringValue) {
+                                    try {
+                                        customizations = JSON.parse(legacyFields.customizations.stringValue);
+                                    } catch {
+                                        customizations = {};
+                                    }
+                                }
+
+                                return {
+                                    customizations,
+                                    generatedAds,
+                                    timestamp: legacyFields.adUpdatedAt?.timestampValue || legacyFields.timestamp?.integerValue || Date.now(),
+                                    createdAt: legacyFields.adUpdatedAt?.timestampValue || legacyFields.createdAt?.timestampValue || new Date().toISOString()
+                                };
                             }
                             if (!response.ok) {
                                 console.error('Load AD error:', response.status, response.statusText);
@@ -911,20 +959,7 @@
                             }
                             
                             // Parse generated ADs - they're stored as array of stringValues
-                            let generatedAds = [];
-                            if (fields.generatedAds?.arrayValue?.values) {
-                                generatedAds = fields.generatedAds.arrayValue.values.map(val => {
-                                    if (val.stringValue) {
-                                        try {
-                                            return JSON.parse(val.stringValue);
-                                        } catch (e) {
-                                            console.warn('Failed to parse AD:', e);
-                                            return { timestamp_in_seconds: 0, description: val.stringValue };
-                                        }
-                                    }
-                                    return val;
-                                });
-                            }
+                            const generatedAds = parseStoredArray(fields.generatedAds);
                             
                             return {
                                 customizations: customizations,
@@ -1011,6 +1046,61 @@
                     async loadGeneratedVQA(userId, videoId) {
                         if (!idToken_FBAuth) return null;
                         try {
+                            const parseStoredMessages = (field) => {
+                                if (!field?.arrayValue?.values) return [];
+                                return field.arrayValue.values.map((val) => {
+                                    if (val.stringValue) {
+                                        try {
+                                            return JSON.parse(val.stringValue);
+                                        } catch {
+                                            return { role: 'assistant', content: val.stringValue };
+                                        }
+                                    }
+                                    return val;
+                                });
+                            };
+
+                            const parseVqaDoc = (doc) => {
+                                const fields = doc?.fields || {};
+                                let customizations = {};
+                                if (fields.customizations?.stringValue) {
+                                    try {
+                                        customizations = JSON.parse(fields.customizations.stringValue);
+                                    } catch (e) {
+                                        console.warn('Failed to parse VQA customizations:', e);
+                                    }
+                                }
+
+                                const messages = parseStoredMessages(fields.messages);
+                                return {
+                                    docId: doc?.name?.split('/').pop() || '',
+                                    customizations,
+                                    messages,
+                                    timestamp: Number(fields.timestamp?.integerValue || 0),
+                                    createdAt: fields.createdAt?.timestampValue || fields.vqaUpdatedAt?.timestampValue || new Date().toISOString()
+                                };
+                            };
+
+                            // Prefer direct read of "current" first; some Firestore rules allow document gets but deny collection list.
+                            const currentPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/current`;
+                            const currentResponse = await fetch(
+                                `https://firestore.googleapis.com/v1/${currentPath}?key=${window.firebaseConfig.apiKey}`,
+                                {
+                                    method: 'GET',
+                                    headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                }
+                            );
+
+                            let entries = [];
+                            if (currentResponse.ok) {
+                                const currentDoc = await currentResponse.json();
+                                const entry = parseVqaDoc(currentDoc);
+                                if (Array.isArray(entry.messages) && entry.messages.length > 0) {
+                                    entries = [entry];
+                                }
+                            }
+
+                            // Then try reading full history (subcollection list). If forbidden, continue with current/legacy fallback.
                             const basePath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa`;
                             const listResponse = await fetch(
                                 `https://firestore.googleapis.com/v1/${basePath}?pageSize=200&key=${window.firebaseConfig.apiKey}`,
@@ -1020,54 +1110,18 @@
                                 }
                             );
 
-                            if (listResponse.status === 404) {
-                                console.log('[CustomQA] No saved VQA documents found (404)');
-                                return null;
-                            }
-                            if (!listResponse.ok) {
+                            if (listResponse.ok) {
+                                const listData = await listResponse.json();
+                                const docs = listData.documents || [];
+                                entries = docs
+                                    .map(parseVqaDoc)
+                                    .filter(entry => Array.isArray(entry.messages) && entry.messages.length > 0)
+                                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+                            } else if (listResponse.status !== 404 && listResponse.status !== 403) {
                                 console.error('Load VQA list error:', listResponse.status, listResponse.statusText);
-                                return null;
+                            } else if (listResponse.status === 403) {
+                                console.warn('[CustomQA] VQA history list forbidden by rules; using current/legacy fallback');
                             }
-
-                            const listData = await listResponse.json();
-                            const docs = listData.documents || [];
-                            const entries = docs
-                                .map((doc) => {
-                                    const fields = doc.fields || {};
-                                    let customizations = {};
-                                    if (fields.customizations?.stringValue) {
-                                        try {
-                                            customizations = JSON.parse(fields.customizations.stringValue);
-                                        } catch (e) {
-                                            console.warn('Failed to parse VQA customizations:', e);
-                                        }
-                                    }
-
-                                    let messages = [];
-                                    if (fields.messages?.arrayValue?.values) {
-                                        messages = fields.messages.arrayValue.values.map(val => {
-                                            if (val.stringValue) {
-                                                try {
-                                                    return JSON.parse(val.stringValue);
-                                                } catch (e) {
-                                                    console.warn('Failed to parse VQA message:', e);
-                                                    return { role: 'assistant', content: val.stringValue };
-                                                }
-                                            }
-                                            return val;
-                                        });
-                                    }
-
-                                    return {
-                                        docId: doc.name?.split('/').pop() || '',
-                                        customizations,
-                                        messages,
-                                        timestamp: Number(fields.timestamp?.integerValue || 0),
-                                        createdAt: fields.createdAt?.timestampValue || new Date().toISOString()
-                                    };
-                                })
-                                .filter(entry => Array.isArray(entry.messages) && entry.messages.length > 0)
-                                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
                             // Keep all sessions, but drop exact duplicates (common when "current" mirrors latest saved doc).
                             const dedupedEntries = [];
@@ -1081,7 +1135,38 @@
                             });
 
                             if (!dedupedEntries.length) {
-                                return null;
+                                // Backward-compatible fallback: older builds stored vqaMessages directly on videos/{videoId}.
+                                const legacyResponse = await fetch(
+                                    `https://firestore.googleapis.com/v1/projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}?key=${window.firebaseConfig.apiKey}`,
+                                    {
+                                        method: 'GET',
+                                        headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                    }
+                                );
+
+                                if (!legacyResponse.ok) {
+                                    return null;
+                                }
+
+                                const legacyData = await legacyResponse.json();
+                                const legacyFields = legacyData.fields || {};
+                                const legacyMessages = parseStoredMessages(legacyFields.vqaMessages || legacyFields.messages);
+                                if (!legacyMessages.length) {
+                                    return null;
+                                }
+
+                                return {
+                                    entries: [{
+                                        docId: 'legacy-video-doc',
+                                        customizations: {},
+                                        messages: legacyMessages,
+                                        timestamp: Number(legacyFields.timestamp?.integerValue || Date.now()),
+                                        createdAt: legacyFields.vqaUpdatedAt?.timestampValue || legacyFields.createdAt?.timestampValue || new Date().toISOString()
+                                    }],
+                                    messages: legacyMessages,
+                                    createdAt: legacyFields.vqaUpdatedAt?.timestampValue || legacyFields.createdAt?.timestampValue || new Date().toISOString(),
+                                    timestamp: Number(legacyFields.timestamp?.integerValue || Date.now())
+                                };
                             }
 
                             return {
@@ -1705,8 +1790,78 @@
                     updateTimeWindowSliderVisibility();
                 }, 100);
 
+                const waitForAuthenticatedSession = async (timeoutMs = 3000) => {
+                    const existingUser = window.FirebaseAPI?.getCurrentUser();
+                    if (existingUser && idToken_FBAuth) {
+                        return existingUser;
+                    }
+
+                    return new Promise((resolve) => {
+                        let settled = false;
+
+                        const finish = (user, token) => {
+                            if (settled) return;
+                            settled = true;
+                            chrome.storage.onChanged.removeListener(onStorageChange);
+                            clearTimeout(timeoutId);
+                            resolve(user && token ? user : null);
+                        };
+
+                        const maybeResolveFromState = () => {
+                            const user = window.FirebaseAPI?.getCurrentUser() || currentUser_FBAuth;
+                            const token = idToken_FBAuth;
+                            if (user && token) {
+                                finish(user, token);
+                            }
+                        };
+
+                        const onStorageChange = (changes, areaName) => {
+                            if (areaName !== 'local') return;
+
+                            if (changes.customqa_currentUser?.newValue) {
+                                currentUser_FBAuth = changes.customqa_currentUser.newValue;
+                            }
+                            if (changes.customqa_idToken?.newValue) {
+                                idToken_FBAuth = changes.customqa_idToken.newValue;
+                            }
+                            if (changes.customqa_refreshToken?.newValue !== undefined) {
+                                refreshToken_FBAuth = changes.customqa_refreshToken.newValue || null;
+                            }
+                            if (changes.customqa_tokenExpiresAt?.newValue !== undefined) {
+                                tokenExpiresAt_FBAuth = Number(changes.customqa_tokenExpiresAt.newValue || 0);
+                            }
+
+                            maybeResolveFromState();
+                        };
+
+                        chrome.storage.onChanged.addListener(onStorageChange);
+
+                        chrome.storage.local.get(['customqa_currentUser', 'customqa_idToken', 'customqa_refreshToken', 'customqa_tokenExpiresAt'], (items) => {
+                            if (items.customqa_currentUser) {
+                                currentUser_FBAuth = items.customqa_currentUser;
+                            }
+                            if (items.customqa_idToken) {
+                                idToken_FBAuth = items.customqa_idToken;
+                            }
+                            if (items.customqa_refreshToken) {
+                                refreshToken_FBAuth = items.customqa_refreshToken;
+                            }
+                            if (items.customqa_tokenExpiresAt) {
+                                tokenExpiresAt_FBAuth = Number(items.customqa_tokenExpiresAt || 0);
+                            }
+
+                            maybeResolveFromState();
+                        });
+
+                        const timeoutId = setTimeout(() => {
+                            const user = window.FirebaseAPI?.getCurrentUser() || currentUser_FBAuth;
+                            finish(user, idToken_FBAuth);
+                        }, timeoutMs);
+                    });
+                };
+
                 // Load user settings if logged in
-                const user = window.FirebaseAPI?.getCurrentUser();
+                const user = await waitForAuthenticatedSession();
                 let hasExistingAD = false;
                 let hasExistingVQA = false;
                 
@@ -3238,20 +3393,20 @@
                     });
                 };
 
-                const normalizeDescriptionKey = (text) => {
+                function normalizeDescriptionKey(text) {
                     return (text || '')
                         .toLowerCase()
                         .replace(/[^a-z0-9\s]/g, ' ')
                         .replace(/\s+/g, ' ')
                         .trim();
-                };
+                }
 
-                const isNoChangeDescription = (text) => {
+                function isNoChangeDescription(text) {
                     const normalized = normalizeDescriptionKey(text);
                     return /no (major )?(visible )?change|no scene change|scene continues|nothing (notable )?(changes|happens)|little to no change/.test(normalized);
-                };
+                }
 
-                const mergeConsecutiveSimilarAds = (items) => {
+                function mergeConsecutiveSimilarAds(items) {
                     const source = Array.isArray(items) ? [...items] : [];
                     if (source.length <= 1) return source;
 
@@ -3288,7 +3443,7 @@
                     });
 
                     return merged;
-                };
+                }
 
                 let isAdGenerationRunning = false;
                 let cancelAdGeneration = false;
