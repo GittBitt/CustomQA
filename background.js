@@ -468,6 +468,9 @@ HARD OUTPUT RULES:
   2. Every description MUST be between ${minWords} and ${maxWords} words.
   3. Keep each segment concise. If many events occur, summarize and include only the most important scene changes.
   4. Include timestamped scene-change cues and mention silent/no-change spans when present.
+  5. Each description MUST end as a complete sentence. Do not end with dangling fragments.
+  6. Never end on trailing connector words such as: "the", "a", "an", "and", "or", "to", "of", "in", "on", "with", "for", "from", "into".
+  7. If needed, slightly rephrase to preserve sentence completeness while still staying within ${minWords}-${maxWords} words.
 
 IMPORTANT: Your response must be valid JSON as an array of objects with this structure:
 [

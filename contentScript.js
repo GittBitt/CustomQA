@@ -3115,41 +3115,110 @@
                     return (text || '').trim().split(/\s+/).filter(Boolean).length;
                 };
 
-                const trimToWordLimit = (text, minWords, maxWords) => {
-                    const words = (text || '').trim().split(/\s+/).filter(Boolean);
-                    
-                    // If within acceptable range, return as-is
-                    if (words.length >= minWords && words.length <= maxWords) {
-                        return (text || '').trim();
+                const finalizeSentenceEnding = (text) => {
+                    let normalized = (text || '').replace(/\s+/g, ' ').trim();
+                    if (!normalized) return '';
+
+                    const trailingPunctuationMatch = normalized.match(/[.!?]["')\]]*$/);
+                    let sentencePunctuation = trailingPunctuationMatch ? trailingPunctuationMatch[0] : '.';
+
+                    if (trailingPunctuationMatch) {
+                        normalized = normalized.slice(0, -sentencePunctuation.length).trim();
                     }
-                    
-                    // If too short, return as-is (don't truncate)
-                    if (words.length < minWords) {
-                        return (text || '').trim();
-                    }
-                    
-                    // Too long: try to find a sentence boundary within range
-                    const candidateTexts = [];
-                    
-                    // Collect candidates from maxWords down to minWords
-                    for (let i = maxWords; i >= minWords; i--) {
-                        candidateTexts.push(words.slice(0, i).join(' '));
-                    }
-                    
-                    // Look for a sentence ending (., !, or ?) within the acceptable range
-                    for (const candidate of candidateTexts) {
-                        if (/[.!?]\s*$/.test(candidate.trim())) {
-                            return candidate.trim();
+
+                    const danglingTailWords = new Set([
+                        'a', 'an', 'the', 'and', 'or', 'but', 'so', 'yet',
+                        'to', 'of', 'in', 'on', 'at', 'by', 'for', 'from', 'with', 'into', 'onto',
+                        'as', 'if', 'than', 'that', 'this', 'these', 'those',
+                        'his', 'her', 'their', 'its', 'my', 'your', 'our'
+                    ]);
+
+                    const getLastWord = (value) => {
+                        const matches = (value || '').toLowerCase().match(/[a-z']+/g);
+                        return matches && matches.length ? matches[matches.length - 1] : '';
+                    };
+
+                    let lastWord = getLastWord(normalized);
+                    while (lastWord && danglingTailWords.has(lastWord)) {
+                        // Prefer dropping the trailing clause after the final comma/semicolon/colon.
+                        const delimiterIndex = Math.max(
+                            normalized.lastIndexOf(','),
+                            normalized.lastIndexOf(';'),
+                            normalized.lastIndexOf(':')
+                        );
+
+                        if (delimiterIndex > -1) {
+                            normalized = normalized.slice(0, delimiterIndex).trim();
+                        } else {
+                            // No delimiter: drop the final dangling word.
+                            normalized = normalized.replace(/\s*[A-Za-z']+\s*$/, '').trim();
                         }
+
+                        lastWord = getLastWord(normalized);
                     }
-                    
-                    // No sentence boundary found: use maxWords and add a period
-                    let trimmed = words.slice(0, maxWords).join(' ');
+
+                    if (!normalized) {
+                        return (text || '').trim();
+                    }
+
+                    if (!/[.!?]["')\]]*$/.test(normalized)) {
+                        normalized = `${normalized}${sentencePunctuation || '.'}`;
+                    }
+
+                    return normalized;
+                };
+
+                const trimToWordLimit = (text, minWords, maxWords) => {
+                    const normalized = (text || '').replace(/\s+/g, ' ').trim();
+                    if (!normalized) return '';
+
+                    const words = normalized.split(' ').filter(Boolean);
+
+                    if (words.length <= maxWords) {
+                        return finalizeSentenceEnding(normalized);
+                    }
+
+                    // Prefer complete sentence prefixes that stay inside the configured range.
+                    const sentenceParts = normalized.match(/[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g) || [normalized];
+                    const candidates = [];
+                    let running = [];
+                    let runningCount = 0;
+
+                    sentenceParts.forEach((part) => {
+                        const sentence = part.trim();
+                        if (!sentence) return;
+                        const sentenceWordCount = countWords(sentence);
+                        if (!sentenceWordCount) return;
+
+                        running.push(sentence);
+                        runningCount += sentenceWordCount;
+
+                        if (runningCount >= minWords && runningCount <= maxWords && /[.!?]["')\]]*$/.test(sentence)) {
+                            candidates.push({
+                                text: running.join(' ').trim(),
+                                count: runningCount
+                            });
+                        }
+                    });
+
+                    if (candidates.length > 0) {
+                        const target = Math.round((minWords + maxWords) / 2);
+                        candidates.sort((a, b) => {
+                            const aDelta = Math.abs(a.count - target);
+                            const bDelta = Math.abs(b.count - target);
+                            if (aDelta !== bDelta) return aDelta - bDelta;
+                            return b.count - a.count;
+                        });
+                        return finalizeSentenceEnding(candidates[0].text);
+                    }
+
+                    // Fallback: truncate at max words and force terminal punctuation.
+                    let trimmed = words.slice(0, maxWords).join(' ').trim();
                     trimmed = trimmed.replace(/[;,]\s*$/, '.');
-                    if (!/[.!?]$/.test(trimmed)) {
+                    if (!/[.!?]["')\]]*$/.test(trimmed)) {
                         trimmed += '.';
                     }
-                    return trimmed.trim();
+                    return finalizeSentenceEnding(trimmed);
                 };
 
                 const normalizeAdDescriptions = (descriptions, targetWords) => {
