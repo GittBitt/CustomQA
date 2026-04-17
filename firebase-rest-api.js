@@ -127,7 +127,7 @@ try {
       idToken = null;
       try {
         await new Promise((resolve, reject) => {
-          chrome.storage.local.remove(['customqa_idToken', 'customqa_currentUser'], () => {
+          chrome.storage.local.remove(['customqa_idToken', 'customqa_currentUser', 'customqa_refreshToken', 'customqa_tokenExpiresAt'], () => {
             if (chrome.runtime.lastError) {
               reject(chrome.runtime.lastError);
             } else {

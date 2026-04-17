@@ -21,10 +21,7 @@
                 adEmphasis: 'balanced',
                 adNarrationStyle: 'objective',
                 adColor: 'on',
-                adPauseDuringAd: false,
-                
-                // VQA-specific settings
-                vqaLength: 25
+                adPauseDuringAd: false
             };
         }
 
@@ -90,7 +87,7 @@
         // For VQA customizations
         getVqaCustomizations() {
             return {
-                length: this.get('vqaLength'),
+                length: this.get('adLength'),
                 presentation: {
                     volume: this.get('volume'),
                     speed: this.get('speed'),
@@ -136,7 +133,7 @@
         if (persisted.adVoice) settings.set('voice', persisted.adVoice);
         if (persisted.vqaVoice) settings.set('voice', persisted.vqaVoice);
         if (persisted.adLength !== undefined) settings.set('adLength', Number(persisted.adLength));
-        if (persisted.vqaLength !== undefined) settings.set('vqaLength', Number(persisted.vqaLength));
+        if (persisted.vqaLength !== undefined && persisted.adLength === undefined) settings.set('adLength', Number(persisted.vqaLength));
         if (persisted.adFrequency) settings.set('adFrequency', persisted.adFrequency);
         if (persisted.adEmphasis) settings.set('adEmphasis', persisted.adEmphasis);
         if (persisted.adColorPreference) settings.set('adColor', persisted.adColorPreference);
@@ -632,7 +629,6 @@
                                             vqaVolume: { integerValue: 100 },
                                             vqaSpeed: { integerValue: 50 },
                                             vqaGender: { stringValue: 'female' },
-                                            vqaLength: { integerValue: 25 },
                                             createdAt: { timestampValue: timestamp },
                                             updatedAt: { timestampValue: timestamp }
                                         }
@@ -759,8 +755,7 @@
                                     // VQA settings
                                     vqaVolume: parseInt(data.fields.vqaVolume?.integerValue || 100),
                                     vqaSpeed: parseInt(data.fields.vqaSpeed?.integerValue || 50),
-                                    vqaGender: data.fields.vqaGender?.stringValue || 'female',
-                                    vqaLength: parseInt(data.fields.vqaLength?.integerValue || 25)
+                                    vqaGender: data.fields.vqaGender?.stringValue || 'female'
                                 };
                             }
                             return null;
@@ -786,7 +781,7 @@
                             maskParams.append('key', window.firebaseConfig.apiKey);
                             ['email', 'role', 'adVolume', 'adSpeed', 'adGender', 'adVoice', 'adLength', 'adFrequency',
                              'adEmphasis', 'adColorPreference', 'adNarrationStyle', 'adPauseDuringAd',
-                             'vqaVolume', 'vqaSpeed', 'vqaGender', 'vqaLength', 'updatedAt'].forEach(field => {
+                             'vqaVolume', 'vqaSpeed', 'vqaGender', 'updatedAt'].forEach(field => {
                                 maskParams.append('updateMask.fieldPaths', field);
                             });
                             
@@ -820,8 +815,6 @@
                                             vqaVolume: { integerValue: parseInt(mergedSettings.vqaVolume || 100) },
                                             vqaSpeed: { integerValue: parseInt(mergedSettings.vqaSpeed || 50) },
                                             vqaGender: { stringValue: mergedSettings.vqaGender || 'female' },
-                                            // VQA content customization
-                                            vqaLength: { integerValue: parseInt(mergedSettings.vqaLength || 25) },
                                             // Timestamps
                                             updatedAt: { timestampValue: new Date().toISOString() }
                                         }
@@ -1039,7 +1032,6 @@
                             const listData = await listResponse.json();
                             const docs = listData.documents || [];
                             const entries = docs
-                                .filter(doc => doc.name?.split('/').pop() !== 'current')
                                 .map((doc) => {
                                     const fields = doc.fields || {};
                                     let customizations = {};
@@ -1077,16 +1069,27 @@
                                 .filter(entry => Array.isArray(entry.messages) && entry.messages.length > 0)
                                 .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-                            if (!entries.length) {
+                            // Keep all sessions, but drop exact duplicates (common when "current" mirrors latest saved doc).
+                            const dedupedEntries = [];
+                            const seenSignatures = new Set();
+                            entries.forEach((entry) => {
+                                const signature = JSON.stringify(entry.messages);
+                                if (!seenSignatures.has(signature)) {
+                                    seenSignatures.add(signature);
+                                    dedupedEntries.push(entry);
+                                }
+                            });
+
+                            if (!dedupedEntries.length) {
                                 return null;
                             }
 
                             return {
-                                entries,
+                                entries: dedupedEntries,
                                 // Backward-compatible flattened view for older rendering paths.
-                                messages: entries.flatMap(entry => entry.messages),
-                                createdAt: entries[0].createdAt,
-                                timestamp: entries[0].timestamp
+                                messages: dedupedEntries.flatMap(entry => entry.messages),
+                                createdAt: dedupedEntries[0].createdAt,
+                                timestamp: dedupedEntries[0].timestamp
                             };
                         } catch (error) {
                             console.error('Error loading VQA:', error);
@@ -1257,15 +1260,7 @@
                             setActiveButton('#vqa-tab .pill-button[data-gender]', 'gender', settings.vqaGender);
                         }
 
-                        // === VQA CONTENT CUSTOMIZATION ===
-                        if (settings.vqaLength) {
-                            const vqaLenSlider = sidebar.querySelector('#vqa-length-slider');
-                            if (vqaLenSlider) {
-                                vqaLenSlider.value = settings.vqaLength;
-                                const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
-                                if (vqaLengthValue) vqaLengthValue.textContent = settings.vqaLength;
-                            }
-                        }
+                        // VQA uses shared adLength; no dedicated VQA length control in user settings.
                     },
 
                     async loadGeneratedAD(videoUrl) {
@@ -2356,15 +2351,11 @@
                         const speed = speedSlider ? parseInt(speedSlider.value) : 50;
                         const gender = genderBtn ? genderBtn.dataset.gender : 'female';
 
-                        // === VQA CONTENT CUSTOMIZATION ===
-                        const lengthSlider = tab.querySelector('#vqa-length-slider');
-                        const vqaLength = lengthSlider ? parseInt(lengthSlider.value) : 25;
-
                         // Save to global settings manager (syncs to chrome.storage.sync)
                         settings.set('volume', volume);
                         settings.set('speed', speed);
                         settings.set('gender', gender);
-                        settings.set('vqaLength', vqaLength);
+                        settings.set('adLength', settings.get('adLength', 25));
 
                         // For database (shared presentation stays synced across AD and VQA)
                         dbSettings.vqaVolume = volume;
@@ -2374,7 +2365,6 @@
                         dbSettings.adSpeed = speed;
                         dbSettings.adGender = gender;
                         dbSettings.adVoice = settings.get('voice', 'human');
-                        dbSettings.vqaLength = vqaLength;
                     }
                     
                     return dbSettings;
@@ -2483,24 +2473,17 @@
                         genderBtn.classList.add('active');
                     }
 
-                    // Sync length sliders
+                    // Sync shared length slider
                     const adLengthSlider = sidebar.querySelector('#length-slider');
-                    const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
                     const adLength = settings.get('adLength', 25);
-                    const vqaLength = settings.get('vqaLength', 25);
                     if (adLengthSlider) {
                         adLengthSlider.value = adLength;
-                        const adLengthValue = sidebar.querySelector('#ad-length-value');
+                        const adLengthValue = sidebar.querySelector('#length-value');
                         if (adLengthValue) adLengthValue.textContent = adLength;
-                    }
-                    if (vqaLengthSlider) {
-                        vqaLengthSlider.value = vqaLength;
-                        const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
-                        if (vqaLengthValue) vqaLengthValue.textContent = vqaLength;
                     }
 
                     console.log('[CustomQA] UI synced to settings:', {
-                        volume, speed, gender, adLength, vqaLength
+                        volume, speed, gender, adLength
                     });
                 };
                 
@@ -2638,29 +2621,19 @@
                 // Length slider update
                 const lengthSlider = sidebar.querySelector('#length-slider');
                 const lengthValue = sidebar.querySelector('#length-value');
-                const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
-                const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
-
-                const syncLengthSliders = (sourceSlider) => {
+                const syncLengthSlider = (sourceSlider) => {
                     const newValue = sourceSlider.value;
                     if (lengthSlider && lengthValue) {
                         lengthSlider.value = newValue;
                         lengthValue.textContent = newValue;
                         lengthSlider.setAttribute('aria-valuetext', `Length ${newValue} words`);
                     }
-                    if (vqaLengthSlider && vqaLengthValue) {
-                        vqaLengthSlider.value = newValue;
-                        vqaLengthValue.textContent = newValue;
-                        vqaLengthSlider.setAttribute('aria-valuetext', `Length ${newValue} words`);
-                    }
                 };
 
-                // Shared debounced handler for both length sliders (synced between AD and VQA)
+                // Shared debounced handler for AD length (also used by VQA generation)
                 const debouncedLengthChange = debounce((value) => {
                     preloadedAudioMap.clear();
-                    // Save to both AD and VQA to keep them in sync
                     settings.set('adLength', value);
-                    settings.set('vqaLength', value);
                     const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                     if (activeTab) {
                         saveAllSettings(activeTab);
@@ -2672,13 +2645,7 @@
                 
                 if (lengthSlider) {
                     lengthSlider.addEventListener('input', (e) => {
-                        syncLengthSliders(e.target);
-                        debouncedLengthChange(e.target.value);
-                    });
-                }
-                if (vqaLengthSlider) {
-                    vqaLengthSlider.addEventListener('input', (e) => {
-                        syncLengthSliders(e.target);
+                        syncLengthSlider(e.target);
                         debouncedLengthChange(e.target.value);
                     });
                 }
@@ -3454,7 +3421,7 @@
                                             vqaVolume: settings.get('volume', 100),
                                             vqaSpeed: settings.get('speed', 50),
                                             vqaGender: settings.get('gender', 'female'),
-                                            vqaLength: settings.get('vqaLength', 25)
+                                            vqaLength: settings.get('adLength', 25)
                                         };
                                         const generatedAds = adSchedule.map(ad => ({
                                             timestamp_in_seconds: ad.timestamp,
@@ -3564,9 +3531,7 @@
                         vqaVolume: 100,
                         vqaSpeed: 50,
                         vqaVoice: 'human',
-                        vqaGender: 'female',
-                        // VQA Content Customization
-                        vqaLength: 25
+                        vqaGender: 'female'
                     };
 
                     // Add the same event listener to all restore settings buttons
@@ -3661,17 +3626,11 @@
                                 // Restore VQA presentation customization
                                 const vqaSliders = {
                                     volume: sidebar.querySelector('#vqa-volume-slider'),
-                                    speed: sidebar.querySelector('#vqa-speed-slider'),
-                                    length: sidebar.querySelector('#vqa-length-slider')
+                                    speed: sidebar.querySelector('#vqa-speed-slider')
                                 };
 
                                 if (defaultSettings.vqaVolume !== undefined && vqaSliders.volume) vqaSliders.volume.value = defaultSettings.vqaVolume;
                                 if (defaultSettings.vqaSpeed !== undefined && vqaSliders.speed) vqaSliders.speed.value = defaultSettings.vqaSpeed;
-                                if (defaultSettings.vqaLength !== undefined && vqaSliders.length) {
-                                    vqaSliders.length.value = defaultSettings.vqaLength;
-                                    const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
-                                    if (vqaLengthValue) vqaLengthValue.textContent = defaultSettings.vqaLength;
-                                }
 
                                 // Restore VQA Gender and Voice if available
                                 if (defaultSettings.vqaGender) {
@@ -3692,7 +3651,6 @@
                                 settings.set('adColor', defaultSettings.adColorPreference);
                                 settings.set('adNarrationStyle', defaultSettings.adNarrationStyle);
                                 settings.set('adPauseDuringAd', defaultSettings.adPauseDuringAd);
-                                settings.set('vqaLength', defaultSettings.vqaLength);
 
                                 console.log('[CustomQA] Default settings applied to UI and runtime');
 
@@ -4325,7 +4283,7 @@
                                 const askedAtTime = video.currentTime;
                                 const askedAtTimestamp = formatTime(askedAtTime);
 
-                                const wordCount = settings.get('vqaLength', 25);
+                                const wordCount = settings.get('adLength', 25);
 
                                 const sendGeminiRequest = async (timestampSeconds) => {
                                     try {
@@ -4456,14 +4414,13 @@ Answer in approximately ${wordCount} words.`;
                                             const vqaSpeedSlider = sidebar.querySelector('#vqa-speed-slider');
                                             const vqaVoiceBtn = sidebar.querySelector('#vqa-tab .pill-button[data-voice].active');
                                             const vqaGenderBtn = sidebar.querySelector('#vqa-tab .pill-button[data-gender].active');
-                                            const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
-                                            
                                             const customizations = {
                                                 vqaVolume: vqaVolumeSlider ? parseInt(vqaVolumeSlider.value) : 100,
                                                 vqaSpeed: vqaSpeedSlider ? parseInt(vqaSpeedSlider.value) : 50,
                                                 vqaVoice: vqaVoiceBtn ? vqaVoiceBtn.dataset.voice : 'human',
                                                 vqaGender: vqaGenderBtn ? vqaGenderBtn.dataset.gender : 'female',
-                                                vqaLength: vqaLengthSlider ? parseInt(vqaLengthSlider.value) : 25
+                                                // Persist as vqaLength in each VQA document, sourced from shared AD length.
+                                                vqaLength: settings.get('adLength', 25)
                                             };
                                             
                                             const messages = [

@@ -6,6 +6,19 @@ const FIREBASE_CONFIG = {
   projectId: 'customqa-cf40b'
 };
 
+function getJwtExpiryMs(token) {
+  try {
+    if (!token || typeof token !== 'string') return 0;
+    const parts = token.split('.');
+    if (parts.length < 2) return 0;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (!payload?.exp) return 0;
+    return Number(payload.exp) * 1000;
+  } catch {
+    return 0;
+  }
+}
+
 // Get ID token and refresh if necessary
 async function getIdToken() {
   return new Promise((resolve, reject) => {
@@ -19,19 +32,26 @@ async function getIdToken() {
       let token = items.customqa_idToken || null;
       const refreshToken = items.customqa_refreshToken || null;
       const expiresAt = Number(items.customqa_tokenExpiresAt || 0);
+      const jwtExpiresAt = getJwtExpiryMs(token);
       const user = items.customqa_currentUser;
+      const storageExpired = !!expiresAt && Date.now() >= expiresAt;
+      const jwtExpired = !!jwtExpiresAt && Date.now() >= (jwtExpiresAt - 60000);
+      const shouldRefreshKnownToken = !!token && !!refreshToken && (storageExpired || jwtExpired || !expiresAt);
+      const shouldRefreshMissingToken = !token && !!refreshToken;
+      const tokenIsKnownExpired = storageExpired || jwtExpired;
       
       console.log('[BG] Token check:', {
         hasToken: !!token,
         hasRefreshToken: !!refreshToken,
         expiresAt: expiresAt,
-        isExpired: expiresAt && Date.now() >= expiresAt,
+        jwtExpiresAt,
+        isExpiredByStorage: storageExpired,
+        isExpiredByJwt: jwtExpired,
         user: user?.email
       });
       
-      // Check if token is expired and refresh if needed
-      if (token && refreshToken && expiresAt && Date.now() >= expiresAt) {
-        console.log('[BG] Token expired, attempting refresh...');
+      if (shouldRefreshKnownToken || shouldRefreshMissingToken) {
+        console.log('[BG] Refreshing auth token before backend call...');
         refreshIdToken(refreshToken)
           .then((newToken) => {
             if (newToken) {
@@ -40,11 +60,19 @@ async function getIdToken() {
             } else {
               console.warn('[BG] Token refresh returned null');
             }
-            resolve(token);
+            if (!newToken && tokenIsKnownExpired) {
+              resolve(null);
+              return;
+            }
+            resolve(token || null);
           })
           .catch((error) => {
-            console.error('[BG] Token refresh failed, using old token:', error);
-            resolve(token); // Fall back to old token
+            console.error('[BG] Token refresh failed:', error);
+            if (tokenIsKnownExpired) {
+              resolve(null);
+              return;
+            }
+            resolve(token || null);
           });
       } else {
         if (!token) {
@@ -81,11 +109,13 @@ async function refreshIdToken(refreshToken) {
 
     const newIdToken = data.idToken;
     const newExpiresAt = data.expiresAt;
+    const newRefreshToken = data.refreshToken || refreshToken;
     
     // Update Chrome storage with new token
     chrome.storage.local.set({
       customqa_idToken: newIdToken,
-      customqa_tokenExpiresAt: newExpiresAt
+      customqa_tokenExpiresAt: newExpiresAt,
+      customqa_refreshToken: newRefreshToken
     });
     
     console.log('[BG] Token updated in storage, expires at', new Date(newExpiresAt).toISOString());
@@ -94,6 +124,31 @@ async function refreshIdToken(refreshToken) {
     console.error('[BG] Error refreshing token:', error);
     return null;
   }
+}
+
+async function forceRefreshStoredToken() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['customqa_refreshToken'], async (items) => {
+      const refreshToken = items.customqa_refreshToken || null;
+      if (!refreshToken) {
+        resolve(null);
+        return;
+      }
+      const refreshedToken = await refreshIdToken(refreshToken);
+      resolve(refreshedToken || null);
+    });
+  });
+}
+
+async function clearStoredAuthState() {
+  return new Promise((resolve) => {
+    chrome.storage.local.remove([
+      'customqa_idToken',
+      'customqa_currentUser',
+      'customqa_refreshToken',
+      'customqa_tokenExpiresAt'
+    ], () => resolve());
+  });
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -246,7 +301,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // Call backend API
-async function callBackend(endpoint, body, idToken) {
+async function callBackend(endpoint, body, idToken, hasRetriedAuth = false) {
   console.log('[Backend] Calling', endpoint, 'with token:', idToken ? `${idToken.substring(0, 20)}...` : 'NONE');
   
   if (!idToken) {
@@ -264,6 +319,15 @@ async function callBackend(endpoint, body, idToken) {
 
   console.log('[Backend] Response status:', response.status);
 
+  if (response.status === 401 && !hasRetriedAuth) {
+    console.warn('[Backend] Received 401, attempting token refresh and one retry...');
+    const refreshedToken = await forceRefreshStoredToken();
+    if (refreshedToken) {
+      return callBackend(endpoint, body, refreshedToken, true);
+    }
+    console.warn('[Backend] Could not refresh token for retry');
+  }
+
   if (!response.ok) {
     const errorText = await response.text();
     console.error(`[Backend] Error ${response.status}:`, errorText);
@@ -274,6 +338,14 @@ async function callBackend(endpoint, body, idToken) {
     } catch {
       // Keep raw text when backend didn't return JSON.
     }
+
+    const isInvalidToken = response.status === 401 && /INVALID_ID_TOKEN|Token verification failed/i.test(backendMessage || '');
+    if (isInvalidToken) {
+      console.warn('[Backend] Clearing invalid stored auth state after 401 INVALID_ID_TOKEN');
+      await clearStoredAuthState();
+      throw new Error('Session expired. Please log in again.');
+    }
+
     throw new Error(`Backend error: ${response.status} - ${backendMessage}`);
   }
 
