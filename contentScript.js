@@ -1312,6 +1312,13 @@
                                 const lengthValue = sidebar.querySelector('#length-value');
                                 if (lengthValue) lengthValue.textContent = settings.adLength;
                             }
+
+                            const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
+                            if (vqaLengthSlider) {
+                                vqaLengthSlider.value = settings.adLength;
+                                const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
+                                if (vqaLengthValue) vqaLengthValue.textContent = settings.adLength;
+                            }
                         }
                         if (settings.adFrequency) {
                             setActiveButton('#audio-descriptions-tab .pill-button[data-frequency]', 'frequency', settings.adFrequency);
@@ -2500,17 +2507,19 @@
                         // === VQA PRESENTATION CUSTOMIZATION ===
                         const volumeSlider = tab.querySelector('#vqa-volume-slider');
                         const speedSlider = tab.querySelector('#vqa-speed-slider');
+                        const vqaLengthSlider = tab.querySelector('#vqa-length-slider');
                         const genderBtn = tab.querySelector('#vqa-tab .pill-button[data-gender].active');
                         
                         const volume = volumeSlider ? parseInt(volumeSlider.value) : 100;
                         const speed = speedSlider ? parseInt(speedSlider.value) : 50;
+                        const adLength = vqaLengthSlider ? parseInt(vqaLengthSlider.value) : settings.get('adLength', 25);
                         const gender = genderBtn ? genderBtn.dataset.gender : 'female';
 
                         // Save to global settings manager (syncs to chrome.storage.sync)
                         settings.set('volume', volume);
                         settings.set('speed', speed);
                         settings.set('gender', gender);
-                        settings.set('adLength', settings.get('adLength', 25));
+                        settings.set('adLength', adLength);
 
                         // For database (shared presentation stays synced across AD and VQA)
                         dbSettings.vqaVolume = volume;
@@ -2520,6 +2529,7 @@
                         dbSettings.adSpeed = speed;
                         dbSettings.adGender = gender;
                         dbSettings.adVoice = settings.get('voice', 'human');
+                        dbSettings.adLength = adLength;
                     }
                     
                     return dbSettings;
@@ -2630,11 +2640,18 @@
 
                     // Sync shared length slider
                     const adLengthSlider = sidebar.querySelector('#length-slider');
+                    const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
                     const adLength = settings.get('adLength', 25);
                     if (adLengthSlider) {
                         adLengthSlider.value = adLength;
                         const adLengthValue = sidebar.querySelector('#length-value');
                         if (adLengthValue) adLengthValue.textContent = adLength;
+                    }
+                    if (vqaLengthSlider) {
+                        vqaLengthSlider.value = adLength;
+                        vqaLengthSlider.setAttribute('aria-valuetext', `Length ${adLength} words`);
+                        const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
+                        if (vqaLengthValue) vqaLengthValue.textContent = adLength;
                     }
 
                     console.log('[CustomQA] UI synced to settings:', {
@@ -2776,12 +2793,19 @@
                 // Length slider update
                 const lengthSlider = sidebar.querySelector('#length-slider');
                 const lengthValue = sidebar.querySelector('#length-value');
+                const vqaLengthSlider = sidebar.querySelector('#vqa-length-slider');
+                const vqaLengthValue = sidebar.querySelector('#vqa-length-value');
                 const syncLengthSlider = (sourceSlider) => {
                     const newValue = sourceSlider.value;
                     if (lengthSlider && lengthValue) {
                         lengthSlider.value = newValue;
                         lengthValue.textContent = newValue;
                         lengthSlider.setAttribute('aria-valuetext', `Length ${newValue} words`);
+                    }
+                    if (vqaLengthSlider && vqaLengthValue) {
+                        vqaLengthSlider.value = newValue;
+                        vqaLengthValue.textContent = newValue;
+                        vqaLengthSlider.setAttribute('aria-valuetext', `Length ${newValue} words`);
                     }
                 };
 
@@ -2800,6 +2824,12 @@
                 
                 if (lengthSlider) {
                     lengthSlider.addEventListener('input', (e) => {
+                        syncLengthSlider(e.target);
+                        debouncedLengthChange(e.target.value);
+                    });
+                }
+                if (vqaLengthSlider) {
+                    vqaLengthSlider.addEventListener('input', (e) => {
                         syncLengthSlider(e.target);
                         debouncedLengthChange(e.target.value);
                     });
