@@ -3229,7 +3229,9 @@
 
                                         const textToSpeak = chatInput.value;
                                         const gender = settings.get('gender', 'female');
+                                        const speed = settings.get('speed', 50);
                                         const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
+                                        const cacheKey = `${textToSpeak}::${gender}::${speed}`;
 
                                         if (textToSpeak && textToSpeak.trim()) {
                                             console.log('[CustomQA] Auto-playing recorded question...');
@@ -3243,9 +3245,14 @@
                                                 type: 'CALL_OPENAI_TTS',
                                                 text: textToSpeak,
                                                 gender: gender,
-                                                speed: settings.get('speed', 50)
+                                                speed: speed
                                             }, (ttsResponse) => {
                                                 if (ttsResponse && ttsResponse.success) {
+                                                    if (chatSpeakerButton) {
+                                                        chatSpeakerButton.setAttribute('data-text', textToSpeak);
+                                                        chatSpeakerButton.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
+                                                        chatSpeakerButton.setAttribute('data-audio-cache-key', cacheKey);
+                                                    }
                                                     playAudioFromDataUrl(ttsResponse.audioDataUrl, chatSpeakerButton);
                                                 } else {
                                                     if (chatSpeakerButton) {
@@ -3367,22 +3374,30 @@
                     }
 
                     console.log('Chat speaker button clicked.');
-                    const chatInput = sidebar.querySelector('.chat-input');
+                    const chatInput = sidebar.querySelector('#vqa-tab .chat-input');
                     const textToSpeak = chatInput.value;
                     const gender = settings.get('gender', 'female');
+                    const speed = settings.get('speed', 50);
 
                     if (textToSpeak) {
                         const audioUrl = thisButton.getAttribute('data-audio-url');
-                        if (audioUrl) {
+                        const cachedKey = thisButton.getAttribute('data-audio-cache-key');
+                        const currentKey = `${textToSpeak}::${gender}::${speed}`;
+                        const canUseCachedAudio = !!audioUrl && cachedKey === currentKey;
+
+                        if (canUseCachedAudio) {
                             playAudioFromDataUrl(audioUrl, thisButton);
                         } else {
                             chrome.runtime.sendMessage({
                                 type: 'CALL_OPENAI_TTS',
                                 text: textToSpeak,
                                 gender: gender,
-                                speed: settings.get('speed', 50)
+                                speed: speed
                             }, (ttsResponse) => {
                                 if (ttsResponse && ttsResponse.success) {
+                                    thisButton.setAttribute('data-text', textToSpeak);
+                                    thisButton.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
+                                    thisButton.setAttribute('data-audio-cache-key', currentKey);
                                     playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
                                 } else {
                                     console.error('OpenAI TTS error:', ttsResponse?.error);
