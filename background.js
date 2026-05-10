@@ -1,6 +1,6 @@
 console.log('Background script loaded - VERSION 4 (Backend)');
 
-const BACKEND_URL = 'http://localhost:3000'; // Local development
+const BACKEND_URL = 'http://localhost:3000';
 const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyBcHEGgONk1Ff5a8Z1PLT6g3piFMZ9r_8A',
   projectId: 'customqa-cf40b'

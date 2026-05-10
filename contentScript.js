@@ -11,7 +11,7 @@
                 
                 // Whisper/Speech-to-Text settings
                 whisperLanguage: 'en',
-                whisperTemperature: 0.7,
+                whisperTemperature: 0,
                 whisperPrompt: '',
                 whisperResponseFormat: 'json',
                 
@@ -101,7 +101,7 @@
         getWhisperSettings() {
             return {
                 language: this.get('whisperLanguage', 'en'),
-                temperature: this.get('whisperTemperature', 0.7),
+                temperature: this.get('whisperTemperature', 0),
                 prompt: this.get('whisperPrompt', ''),
                 responseFormat: this.get('whisperResponseFormat', 'json')
             };
@@ -3014,8 +3014,81 @@
                 let mediaRecorder = null;
                 let audioChunks = [];
                 let micAutoStopTimer = null;
+                let micSilenceMonitor = null;
+                let micAudioContext = null;
+                let micAnalyser = null;
+                let micSourceNode = null;
+                let micStream = null;
+                let micStartedAt = 0;
+                let micHasDetectedSpeech = false;
+                let micNoSpeechTimer = null;
+                let micSpeechFrameCount = 0;
+                let micDetectedSpeechAt = 0;
+                let micPeakRms = 0;
                 const chatMicButton = sidebar.querySelector('#chat-mic-button');
                 const activationSound = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
+                const MIC_INITIAL_GRACE_MS = 500;
+                const MIC_SPEECH_THRESHOLD = 0.024;
+                const MIC_SILENCE_MS = 1200;
+                const MIC_MONITOR_INTERVAL_MS = 120;
+                const MIC_NO_SPEECH_TIMEOUT_MS = 6000;
+                const MIC_SPEECH_CONFIRM_FRAMES = 2;
+                const MIC_FALLBACK_MIN_PEAK_RMS = 0.018;
+
+                const stopMicMonitoring = () => {
+                    if (micAutoStopTimer) {
+                        clearTimeout(micAutoStopTimer);
+                        micAutoStopTimer = null;
+                    }
+
+                    if (micSilenceMonitor) {
+                        clearInterval(micSilenceMonitor);
+                        micSilenceMonitor = null;
+                    }
+
+                    if (micNoSpeechTimer) {
+                        clearTimeout(micNoSpeechTimer);
+                        micNoSpeechTimer = null;
+                    }
+
+                    if (micSourceNode) {
+                        try {
+                            micSourceNode.disconnect();
+                        } catch (error) {
+                            console.warn('[CustomQA] Failed to disconnect mic source node:', error);
+                        }
+                        micSourceNode = null;
+                    }
+
+                    if (micAnalyser) {
+                        try {
+                            micAnalyser.disconnect();
+                        } catch (error) {
+                            console.warn('[CustomQA] Failed to disconnect mic analyser:', error);
+                        }
+                        micAnalyser = null;
+                    }
+
+                    if (micAudioContext) {
+                        micAudioContext.close().catch((error) => {
+                            console.warn('[CustomQA] Failed to close mic audio context:', error);
+                        });
+                        micAudioContext = null;
+                    }
+
+                    micStream = null;
+                    micHasDetectedSpeech = false;
+                    micSpeechFrameCount = 0;
+                    micDetectedSpeechAt = 0;
+                    micPeakRms = 0;
+                };
+
+                const stopMicRecording = () => {
+                    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                        mediaRecorder.stop();
+                    }
+                };
+
                 const playActivationCue = (pitchedDown = false) => {
                     try {
                         const cue = new Audio(chrome.runtime.getURL('assets/activation.mp3'));
@@ -3037,36 +3110,45 @@
                     chatMicButton.addEventListener('click', async () => {
                     if (isListeningChatMicButton) {
                         // Stop recording
-                        if (micAutoStopTimer) {
-                            clearTimeout(micAutoStopTimer);
-                            micAutoStopTimer = null;
-                        }
-                        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                            mediaRecorder.stop();
-                        }
+                        stopMicMonitoring();
+                        stopMicRecording();
                         isListeningChatMicButton = false;
                         chatMicButton.classList.remove('listening');
                     } else {
                         // Start recording
                         try {
                             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                            micStream = stream;
                             mediaRecorder = new MediaRecorder(stream);
                             audioChunks = [];
+                            micStartedAt = Date.now();
+                            micHasDetectedSpeech = false;
+                            micSpeechFrameCount = 0;
+                            micDetectedSpeechAt = 0;
+                            micPeakRms = 0;
+                            micNoSpeechTimer = setTimeout(() => {
+                                if (isListeningChatMicButton && mediaRecorder && mediaRecorder.state !== 'inactive' && !micHasDetectedSpeech) {
+                                    stopMicRecording();
+                                }
+                            }, MIC_NO_SPEECH_TIMEOUT_MS);
                             
                             mediaRecorder.ondataavailable = (event) => {
                                 audioChunks.push(event.data);
                             };
                             
                             mediaRecorder.onstop = async () => {
-                                if (micAutoStopTimer) {
-                                    clearTimeout(micAutoStopTimer);
-                                    micAutoStopTimer = null;
-                                }
+                                const activeMicStream = micStream;
+                                const hadDetectedSpeech = micHasDetectedSpeech;
+                                const recordedPeakRms = micPeakRms;
+                                stopMicMonitoring();
+                                isListeningChatMicButton = false;
+                                chatMicButton.classList.remove('listening');
+
                                 // When mic stops listening, play a pitched-down cue.
                                 playActivationCue(true);
 
                                 try {
-                                    stream.getTracks().forEach(track => track.stop());
+                                    activeMicStream?.getTracks().forEach(track => track.stop());
                                 } catch (error) {
                                     console.warn('[CustomQA] Failed to stop mic stream tracks:', error);
                                 }
@@ -3074,6 +3156,21 @@
                                 // Create audio blob using the recorder's native mime type.
                                 const recordedMimeType = mediaRecorder?.mimeType || audioChunks?.[0]?.type || 'audio/webm';
                                 const audioBlob = new Blob(audioChunks, { type: recordedMimeType });
+
+                                const canUseFallbackTranscription = !hadDetectedSpeech && recordedPeakRms >= MIC_FALLBACK_MIN_PEAK_RMS;
+
+                                if (!hadDetectedSpeech && !canUseFallbackTranscription) {
+                                    console.log('[CustomQA] No speech detected; skipping Whisper transcription');
+                                    const chatInput = sidebar.querySelector('#vqa-tab .chat-input');
+                                    if (chatInput && !chatInput.value.trim()) {
+                                        chatInput.placeholder = 'No speech detected. Try speaking a bit louder.';
+                                    }
+                                    return;
+                                }
+
+                                if (canUseFallbackTranscription) {
+                                    console.log('[CustomQA] Using fallback transcription path for low-volume speech. Peak RMS:', recordedPeakRms.toFixed(4));
+                                }
                                 
                                 // Get Whisper settings from SettingsManager
                                 const whisperSettings = settings.getWhisperSettings();
@@ -3090,38 +3187,110 @@
                                     settings: whisperSettings
                                 }, (response) => {
                                     if (response && response.success) {
-                                        const chatInput = sidebar.querySelector('.chat-input');
+                                        const chatInput = sidebar.querySelector('#vqa-tab .chat-input');
+                                        if (!chatInput) {
+                                            console.error('[CustomQA] VQA chat input not found after transcription');
+                                            return;
+                                        }
+
                                         chatInput.value = response.text;
+                                        chatInput.dispatchEvent(new Event('input', { bubbles: true }));
                                         console.log('[CustomQA] Transcribed:', response.text);
-                                        
-                                        // Auto-play what the user just said
-                                        setTimeout(() => {
-                                            const textToSpeak = chatInput.value;
-                                            const gender = settings.get('gender', 'female');
-                                            
-                                            if (textToSpeak && textToSpeak.trim()) {
-                                                console.log('[CustomQA] Auto-playing recorded question...');
-                                                chrome.runtime.sendMessage({
-                                                    type: 'CALL_OPENAI_TTS',
-                                                    text: textToSpeak,
-                                                    gender: gender,
-                                                    speed: settings.get('speed', 50)
-                                                }, (ttsResponse) => {
-                                                    if (ttsResponse && ttsResponse.success) {
-                                                        const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
-                                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, chatSpeakerButton);
-                                                    } else {
-                                                        console.error('OpenAI TTS error:', ttsResponse?.error);
-                                                    }
-                                                });
+
+                                        const textToSpeak = chatInput.value;
+                                        const gender = settings.get('gender', 'female');
+                                        const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
+
+                                        if (textToSpeak && textToSpeak.trim()) {
+                                            console.log('[CustomQA] Auto-playing recorded question...');
+
+                                            // Toggle speaker state as soon as TTS is requested.
+                                            if (chatSpeakerButton) {
+                                                setButtonToStopIcon(chatSpeakerButton);
                                             }
-                                        }, 100);
+
+                                            chrome.runtime.sendMessage({
+                                                type: 'CALL_OPENAI_TTS',
+                                                text: textToSpeak,
+                                                gender: gender,
+                                                speed: settings.get('speed', 50)
+                                            }, (ttsResponse) => {
+                                                if (ttsResponse && ttsResponse.success) {
+                                                    playAudioFromDataUrl(ttsResponse.audioDataUrl, chatSpeakerButton);
+                                                } else {
+                                                    if (chatSpeakerButton) {
+                                                        setButtonToSpeakerIcon(chatSpeakerButton);
+                                                    }
+                                                    console.error('OpenAI TTS error:', ttsResponse?.error);
+                                                }
+                                            });
+                                        }
                                     } else {
                                         console.error('Whisper API error:', response?.error);
                                         alert('Error transcribing audio: ' + (response?.error || 'Unknown error'));
                                     }
                                 });
                             };
+
+                                try {
+                                    micAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+                                    micAnalyser = micAudioContext.createAnalyser();
+                                    micAnalyser.fftSize = 2048;
+                                    micSourceNode = micAudioContext.createMediaStreamSource(stream);
+                                    micSourceNode.connect(micAnalyser);
+
+                                    const samples = new Uint8Array(micAnalyser.fftSize);
+                                    micSilenceMonitor = setInterval(() => {
+                                        if (!isListeningChatMicButton || !mediaRecorder || mediaRecorder.state === 'inactive' || !micAnalyser) {
+                                            return;
+                                        }
+
+                                        const elapsedMs = Date.now() - micStartedAt;
+                                        if (elapsedMs < MIC_INITIAL_GRACE_MS) {
+                                            return;
+                                        }
+
+                                        micAnalyser.getByteTimeDomainData(samples);
+                                        let sumSquares = 0;
+
+                                        for (let i = 0; i < samples.length; i++) {
+                                            const normalized = (samples[i] - 128) / 128;
+                                            sumSquares += normalized * normalized;
+                                        }
+
+                                        const rms = Math.sqrt(sumSquares / samples.length);
+                                        micPeakRms = Math.max(micPeakRms, rms);
+
+                                        if (rms >= MIC_SPEECH_THRESHOLD) {
+                                            micSpeechFrameCount += 1;
+                                            if (!micHasDetectedSpeech && micSpeechFrameCount >= MIC_SPEECH_CONFIRM_FRAMES) {
+                                                micHasDetectedSpeech = true;
+                                                micDetectedSpeechAt = Date.now();
+                                            }
+                                            if (micNoSpeechTimer) {
+                                                clearTimeout(micNoSpeechTimer);
+                                                micNoSpeechTimer = null;
+                                            }
+                                            if (micAutoStopTimer) {
+                                                clearTimeout(micAutoStopTimer);
+                                                micAutoStopTimer = null;
+                                            }
+                                            return;
+                                        }
+
+                                        micSpeechFrameCount = 0;
+
+                                        if (micHasDetectedSpeech && !micAutoStopTimer) {
+                                            micAutoStopTimer = setTimeout(() => {
+                                                if (isListeningChatMicButton && mediaRecorder && mediaRecorder.state !== 'inactive') {
+                                                    stopMicRecording();
+                                                }
+                                            }, MIC_SILENCE_MS);
+                                        }
+                                    }, MIC_MONITOR_INTERVAL_MS);
+                                } catch (error) {
+                                    console.warn('[CustomQA] Failed to initialize mic silence monitor:', error);
+                                }
                             
                             // Clear previous chat input text so new transcription replaces it
                             const chatInputToRecord = sidebar.querySelector('.chat-input');
@@ -3136,14 +3305,6 @@
                             }
                             
                             mediaRecorder.start();
-                            // Auto-stop listening after 5 seconds.
-                            micAutoStopTimer = setTimeout(() => {
-                                if (isListeningChatMicButton && mediaRecorder && mediaRecorder.state !== 'inactive') {
-                                    mediaRecorder.stop();
-                                    isListeningChatMicButton = false;
-                                    chatMicButton.classList.remove('listening');
-                                }
-                            }, 5000);
                             isListeningChatMicButton = true;
                             chatMicButton.classList.add('listening');
                             try {
