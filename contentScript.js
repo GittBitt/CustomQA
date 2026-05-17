@@ -170,6 +170,15 @@
 
     let currentVolume = 1; // Default volume
     const preloadedAudioMap = new Map();
+    const audioBufferCache = new Map();
+
+    const buildTtsCacheKey = (text, gender, speed, voice) => {
+        const normalizedText = (text || '').trim();
+        const normalizedGender = (gender || '').toString().toLowerCase();
+        const normalizedVoice = (voice || '').toString().toLowerCase();
+        const normalizedSpeed = Number.isFinite(speed) ? String(speed) : '';
+        return `${normalizedText}::${normalizedGender}::${normalizedVoice}::${normalizedSpeed}`;
+    };
 
     // Prevent audio ducking by monitoring and restoring gainNode value
     const preventAudioDucking = setInterval(() => {
@@ -262,7 +271,7 @@
             }
         };
 
-        const playAudioFromDataUrl = async (dataUrl, buttonElement, onendedCallback = null, delayMs = 0) => {
+        const playAudioFromDataUrl = async (dataUrl, buttonElement, onendedCallback = null, delayMs = 0, cacheKey = null) => {
             // Check if audioContext is available
             if (!audioContext || !gainNode) {
                 console.warn('[CustomQA] AudioContext not initialized, skipping audio playback');
@@ -284,9 +293,19 @@
             }
 
             try {
-                const response = await fetch(dataUrl);
-                const arrayBuffer = await response.arrayBuffer();
-                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                let audioBuffer = null;
+                if (cacheKey && audioBufferCache.has(cacheKey)) {
+                    audioBuffer = audioBufferCache.get(cacheKey);
+                }
+
+                if (!audioBuffer) {
+                    const response = await fetch(dataUrl);
+                    const arrayBuffer = await response.arrayBuffer();
+                    audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    if (cacheKey) {
+                        audioBufferCache.set(cacheKey, audioBuffer);
+                    }
+                }
 
                 const playSound = () => {
                     // Ensure audio context and gain node are available
@@ -357,25 +376,60 @@
             }
         };
 
-        const preloadAndStoreAudio = (text, buttonElement, gender) => {
-            if (!text || preloadedAudioMap.has(text)) {
-                if (preloadedAudioMap.has(text)) {
-                    buttonElement.setAttribute('data-audio-url', preloadedAudioMap.get(text));
+        const preloadAndStoreAudio = (text, buttonElement, gender, voice, speed, onReady = null) => {
+            if (!text) return;
+
+            const resolvedGender = gender || settings.get('gender', 'female');
+            const resolvedVoice = voice || settings.get('voice', 'human');
+            const resolvedSpeed = Number.isFinite(speed) ? speed : settings.get('speed', 50);
+            const cacheKey = buildTtsCacheKey(text, resolvedGender, resolvedSpeed, resolvedVoice);
+
+            if (preloadedAudioMap.has(cacheKey)) {
+                if (buttonElement) {
+                    buttonElement.setAttribute('data-audio-url', preloadedAudioMap.get(cacheKey));
+                    buttonElement.setAttribute('data-audio-cache-key', cacheKey);
                 }
+                console.log('[TTS] Audio already cached:', text.substring(0, 30) + '...');
                 return;
             }
 
+            console.log('[TTS PRELOAD] Starting preload:', text.substring(0, 30) + '...');
             chrome.runtime.sendMessage({
                 type: 'PRELOAD_OPENAI_TTS',
                 text: text,
-                gender: gender,
-                speed: settings.get('speed', 50)
+                gender: resolvedGender,
+                speed: resolvedSpeed
             }, (response) => {
                 if (response && response.success) {
-                    preloadedAudioMap.set(response.text, response.audioDataUrl);
+                    preloadedAudioMap.set(cacheKey, response.audioDataUrl);
+                    console.log('[TTS PRELOAD COMPLETE] Audio cached and ready:', text.substring(0, 30) + '...');
+                    if (buttonElement) {
+                        buttonElement.setAttribute('data-audio-url', response.audioDataUrl);
+                        buttonElement.setAttribute('data-audio-cache-key', cacheKey);
+                    }
+                    if (onReady) {
+                        onReady(response.audioDataUrl, cacheKey);
+                    }
+                    if (audioContext && !audioBufferCache.has(cacheKey)) {
+                        fetch(response.audioDataUrl)
+                            .then((bufferResponse) => bufferResponse.arrayBuffer())
+                            .then((arrayBuffer) => audioContext.decodeAudioData(arrayBuffer))
+                            .then((audioBuffer) => {
+                                audioBufferCache.set(cacheKey, audioBuffer);
+                            })
+                            .catch((error) => {
+                                console.warn('[CustomQA] Failed to decode preloaded audio:', error);
+                            });
+                    }
                     // Find the button associated with this text and set the attribute
                     const buttons = document.querySelectorAll(`[data-text="${response.text}"]`);
-                    buttons.forEach(btn => btn.setAttribute('data-audio-url', response.audioDataUrl));
+                    buttons.forEach((btn) => {
+                        const existingKey = btn.getAttribute('data-audio-cache-key');
+                        if (!existingKey || existingKey === cacheKey) {
+                            btn.setAttribute('data-audio-url', response.audioDataUrl);
+                            btn.setAttribute('data-audio-cache-key', cacheKey);
+                        }
+                    });
                 } else {
                     console.error('OpenAI TTS preload error:', response?.error);
                 }
@@ -1081,24 +1135,29 @@
                                 };
                             };
 
-                            // Prefer direct read of "current" first; some Firestore rules allow document gets but deny collection list.
-                            const currentPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/current`;
-                            const currentResponse = await fetch(
-                                `https://firestore.googleapis.com/v1/${currentPath}?key=${window.firebaseConfig.apiKey}`,
+                            const historyPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/history`;
+                            const historyResponse = await fetch(
+                                `https://firestore.googleapis.com/v1/${historyPath}?key=${window.firebaseConfig.apiKey}`,
                                 {
                                     method: 'GET',
                                     headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
                                 }
                             );
 
-                            let entries = [];
-                            if (currentResponse.ok) {
-                                const currentDoc = await currentResponse.json();
-                                const entry = parseVqaDoc(currentDoc);
+                            if (historyResponse.ok) {
+                                const historyDoc = await historyResponse.json();
+                                const entry = parseVqaDoc(historyDoc);
                                 if (Array.isArray(entry.messages) && entry.messages.length > 0) {
-                                    entries = [entry];
+                                    return {
+                                        entries: [entry],
+                                        messages: entry.messages,
+                                        createdAt: entry.createdAt,
+                                        timestamp: entry.timestamp
+                                    };
                                 }
                             }
+
+                            let entries = [];
 
                             // Then try reading full history (subcollection list). If forbidden, continue with current/legacy fallback.
                             const basePath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa`;
@@ -1113,14 +1172,23 @@
                             if (listResponse.ok) {
                                 const listData = await listResponse.json();
                                 const docs = listData.documents || [];
-                                entries = docs
+                                const parsedEntries = docs
                                     .map(parseVqaDoc)
                                     .filter(entry => Array.isArray(entry.messages) && entry.messages.length > 0)
-                                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+                                    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+                                const mergedMessages = parsedEntries.flatMap(entry => entry.messages || []);
+                                if (mergedMessages.length) {
+                                    entries = [{
+                                        docId: 'history',
+                                        customizations: parsedEntries[parsedEntries.length - 1]?.customizations || {},
+                                        messages: mergedMessages,
+                                        timestamp: parsedEntries[parsedEntries.length - 1]?.timestamp || Date.now(),
+                                        createdAt: parsedEntries[parsedEntries.length - 1]?.createdAt || new Date().toISOString()
+                                    }];
+                                }
                             } else if (listResponse.status !== 404 && listResponse.status !== 403) {
                                 console.error('Load VQA list error:', listResponse.status, listResponse.statusText);
-                            } else if (listResponse.status === 403) {
-                                console.warn('[CustomQA] VQA history list forbidden by rules; using current/legacy fallback');
                             }
 
                             // Keep all sessions, but drop exact duplicates (common when "current" mirrors latest saved doc).
@@ -1185,6 +1253,19 @@
                     async saveGeneratedVQA(userId, videoId, videoLink, videoLength, customizations, messages) {
                         if (!idToken_FBAuth) return false;
                         try {
+                            const parseStoredMessages = (field) => {
+                                if (!field?.arrayValue?.values) return [];
+                                return field.arrayValue.values.map((val) => {
+                                    if (val.stringValue) {
+                                        try {
+                                            return JSON.parse(val.stringValue);
+                                        } catch {
+                                            return { role: 'assistant', content: val.stringValue };
+                                        }
+                                    }
+                                    return val;
+                                });
+                            };
                             // Extract video title from page
                             const titleElement = document.querySelector('h1.ytd-video-primary-info-renderer') || 
                                                document.querySelector('h1 yt-formatted-string') ||
@@ -1195,56 +1276,52 @@
                             // First ensure the video document exists with title
                             await this.ensureVideoDocumentExists(userId, videoId, videoLink, videoLength, idToken_FBAuth, videoTitle);
                             
-                            // Generate a unique document ID for this VQA generation
-                            const vqaDocId = this.generateDocumentId();
                             const timestamp = new Date().toISOString();
-                            
-                            const vqaDocFields = {
+
+                            const historyDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/history`;
+                            let mergedMessages = Array.isArray(messages) ? messages.slice() : [];
+                            try {
+                                const historyGetResponse = await fetch(
+                                    `https://firestore.googleapis.com/v1/${historyDocPath}?key=${window.firebaseConfig.apiKey}`,
+                                    {
+                                        method: 'GET',
+                                        headers: { 'Authorization': `Bearer ${idToken_FBAuth}` }
+                                    }
+                                );
+
+                                if (historyGetResponse.ok) {
+                                    const historyDoc = await historyGetResponse.json();
+                                    const existingMessages = parseStoredMessages(historyDoc?.fields?.messages);
+                                    if (existingMessages.length) {
+                                        mergedMessages = [...existingMessages, ...mergedMessages];
+                                    }
+                                }
+                            } catch (mergeError) {
+                                console.warn('Failed to merge VQA history:', mergeError);
+                            }
+
+                            const historyDocFields = {
                                 customizations: { stringValue: JSON.stringify(customizations) },
-                                messages: { arrayValue: { values: messages.map(m => ({ stringValue: JSON.stringify(m) })) } },
+                                messages: { arrayValue: { values: mergedMessages.map(m => ({ stringValue: JSON.stringify(m) })) } },
                                 timestamp: { integerValue: Date.now() },
                                 createdAt: { timestampValue: timestamp }
                             };
-                            
-                            // Save to unique document for history
-                            console.log('Saving VQA to subcollection:', vqaDocId);
-                            const vqaDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/${vqaDocId}`;
-                            
-                            const response = await fetch(
-                                `https://firestore.googleapis.com/v1/${vqaDocPath}?key=${window.firebaseConfig.apiKey}`,
+                            const historyResponse = await fetch(
+                                `https://firestore.googleapis.com/v1/${historyDocPath}?key=${window.firebaseConfig.apiKey}`,
                                 {
                                     method: 'PATCH',
                                     headers: {
                                         'Authorization': `Bearer ${idToken_FBAuth}`,
                                         'Content-Type': 'application/json'
                                     },
-                                    body: JSON.stringify({ fields: vqaDocFields })
+                                    body: JSON.stringify({ fields: historyDocFields })
                                 }
                             );
-                            const data = await response.json();
-                            if (!response.ok) {
-                                console.error('Save VQA error:', data.error?.message || JSON.stringify(data));
-                                return false;
+                            if (!historyResponse.ok) {
+                                console.warn('Save VQA history document warning:', historyResponse.status);
                             }
-                            
-                            // Also save to "current" document for easy retrieval
-                            const currentDocPath = `projects/${window.firebaseConfig.projectId}/databases/customqa/documents/users/${userId}/videos/${videoId}/vqa/current`;
-                            const currentResponse = await fetch(
-                                `https://firestore.googleapis.com/v1/${currentDocPath}?key=${window.firebaseConfig.apiKey}`,
-                                {
-                                    method: 'PATCH',
-                                    headers: {
-                                        'Authorization': `Bearer ${idToken_FBAuth}`,
-                                        'Content-Type': 'application/json'
-                                    },
-                                    body: JSON.stringify({ fields: vqaDocFields })
-                                }
-                            );
-                            if (!currentResponse.ok) {
-                                console.warn('Save VQA to current document warning:', currentResponse.status);
-                            }
-                            
-                            console.log('VQA saved successfully:', vqaDocId);
+
+                            console.log('VQA history updated successfully');
                             return true;
                         } catch (error) {
                             console.error('Error saving VQA:', error);
@@ -2060,29 +2137,46 @@
                                         }
                                         
                                         const textToSpeak = thisButton.getAttribute('data-text');
+                                        const gender = settings.get('gender', 'female');
+                                        const voice = settings.get('voice', 'human');
+                                        const speed = settings.get('speed', 50);
+                                        const cacheKey = buildTtsCacheKey(textToSpeak, gender, speed, voice);
+                                        
+                                        // Check if audio is preloaded
+                                        const cachedAudioUrl = preloadedAudioMap.get(cacheKey);
+                                        const buttonCacheKey = thisButton.getAttribute('data-audio-cache-key');
+                                        const buttonAudioUrl = buttonCacheKey === cacheKey ? thisButton.getAttribute('data-audio-url') : null;
+                                        const audioUrl = cachedAudioUrl || buttonAudioUrl;
+                                        
                                         const adTimestamp = parseFloat(thisButton.getAttribute('data-timestamp')) || 0;
                                         const videoTime = video?.currentTime || 0;
                                         const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
                                         const isPauseOn = pauseAdButton !== null;
                                         
-                                        let delayMs = 0;
-                                        if (isPauseOn) {
-                                            // Pause is ON: 1 second delay before audio
-                                            delayMs = 1000;
-                                        } else {
-                                            // Pause is OFF: play audio 5 seconds before the AD timestamp
-                                            const timeUntilAd = (adTimestamp - videoTime) * 1000; // Convert to ms
-                                            delayMs = Math.max(0, timeUntilAd - 5000); // Play 5s before
+                                        const delayMs = 0;
+                                        
+                                        if (audioUrl) {
+                                            // Audio is preloaded, play immediately
+                                            console.log('[TTS PLAYBACK] Playing from cache (zero delay):', textToSpeak.substring(0, 30) + '...');
+                                            thisButton.setAttribute('data-audio-url', audioUrl);
+                                            thisButton.setAttribute('data-audio-cache-key', cacheKey);
+                                            playAudioFromDataUrl(audioUrl, thisButton, null, delayMs, cacheKey);
+                                            return;
                                         }
                                         
+                                        // Fallback: fetch audio on-demand
+                                        console.log('[TTS PLAYBACK] Audio not cached, fetching on-demand:', textToSpeak.substring(0, 30) + '...');
                                         chrome.runtime.sendMessage({
                                             type: 'CALL_OPENAI_TTS',
                                             text: textToSpeak,
-                                            gender: settings.get('gender', 'female'),
-                                            speed: settings.get('speed', 50)
+                                            gender: gender,
+                                            speed: speed
                                         }, (ttsResponse) => {
                                             if (ttsResponse && ttsResponse.success) {
-                                                playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, delayMs);
+                                                preloadedAudioMap.set(cacheKey, ttsResponse.audioDataUrl);
+                                                thisButton.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
+                                                thisButton.setAttribute('data-audio-cache-key', cacheKey);
+                                                playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, delayMs, cacheKey);
                                             } else {
                                                 console.error('OpenAI TTS error:', ttsResponse?.error);
                                             }
@@ -2096,11 +2190,13 @@
                                 console.log('[CustomQA] AD bubbles displayed');
                                 
                                 // Populate adSchedule with loaded ADs for timeupdate auto-play
+                                const currentTime = video?.currentTime || 0;
                                 adSchedule = descriptions.map((desc, index) => ({
                                     timestamp: desc.timestamp,
                                     endTimestamp: desc.endTimestamp,
                                     description: desc.description,
-                                    played: true, // Mark all previously loaded ADs as already played to avoid auto-playing old content
+                                    // Only mark as played if the timestamp is already in the past.
+                                    played: desc.timestamp <= currentTime,
                                     buttonId: `ad-speaker-btn-loaded-${index}`
                                 }));
                                 adScheduleVideoUrl = videoUrl; // Track video for this schedule
@@ -2114,8 +2210,13 @@
                                     const allAdButtons = sidebar.querySelectorAll('#ad-messages [id$="-loaded-"] button[data-text]');
                                     allAdButtons.forEach(btn => {
                                         const text = btn.getAttribute('data-text');
-                                        if (text && !preloadedAudioMap.has(text)) {
-                                            preloadAndStoreAudio(text, btn, gender);
+                                        if (text) {
+                                            const voice = settings.get('voice', 'human');
+                                            const speed = settings.get('speed', 50);
+                                            const cacheKey = buildTtsCacheKey(text, gender, speed, voice);
+                                            if (!preloadedAudioMap.has(cacheKey)) {
+                                                preloadAndStoreAudio(text, btn, gender, voice, speed);
+                                            }
                                         }
                                     });
                                 }, 100);
@@ -2209,73 +2310,65 @@
                                         .flatMap(entry => Array.isArray(entry.messages) ? entry.messages : [])
                                     : (Array.isArray(previousVQA.messages) ? previousVQA.messages : []);
 
-                                // Separate questions from answers
-                                const questions = [];
-                                const answers = [];
-
-                                allMessages.forEach(msg => {
-                                    // Parse message if it's a stringified object
-                                    let msgContent = msg;
+                                const orderedMessages = allMessages.map((msg) => {
                                     if (typeof msg === 'string') {
                                         try {
-                                            msgContent = JSON.parse(msg);
+                                            return JSON.parse(msg);
                                         } catch (e) {
                                             console.warn('[CustomQA] Failed to parse message:', e);
-                                            msgContent = { role: 'assistant', content: msg };
+                                            return { role: 'assistant', content: msg };
                                         }
                                     }
-                                    
-                                    if (msgContent.role === 'user') {
-                                        questions.push(msgContent);
-                                    } else {
-                                        answers.push(msgContent);
-                                    }
+                                    return msg;
                                 });
-                                
-                                // Display questions first (blue bubbles)
-                                questions.forEach(q => {
-                                    const userMessageContainer = document.createElement('div');
-                                    userMessageContainer.style.display = 'flex';
-                                    userMessageContainer.style.alignItems = 'flex-start';
-                                    userMessageContainer.style.gap = '8px';
-                                    userMessageContainer.style.marginBottom = '12px';
-                                    userMessageContainer.style.justifyContent = 'flex-end';
-                                    
+
+                                const renderVqaMessage = (messageData) => {
+                                    const isUser = messageData?.role === 'user';
+                                    const text = messageData?.content || messageData?.text || '';
+                                    if (!text) return;
+
+                                    const messageContainer = document.createElement('div');
+                                    messageContainer.style.display = 'flex';
+                                    messageContainer.style.alignItems = 'flex-start';
+                                    messageContainer.style.gap = '8px';
+                                    messageContainer.style.marginBottom = '12px';
+                                    if (isUser) {
+                                        messageContainer.style.justifyContent = 'flex-end';
+                                    }
+
                                     const message = document.createElement('div');
-                                    message.className = 'chat-message user-message';
+                                    message.className = isUser ? 'chat-message user-message' : 'chat-message bot-message';
                                     message.style.flex = '1';
-                                    message.textContent = q.content || q.text || '';
-                                    
-                                    const userSpeakerBtn = document.createElement('button');
-                                    setButtonToSpeakerIcon(userSpeakerBtn);
-                                    userSpeakerBtn.setAttribute('data-text', q.content || q.text || '');
-                                    userSpeakerBtn.style.background = 'none';
-                                    userSpeakerBtn.style.border = 'none';
-                                    userSpeakerBtn.style.fontSize = '18px';
-                                    userSpeakerBtn.style.cursor = 'pointer';
-                                    userSpeakerBtn.style.padding = '0';
-                                    userSpeakerBtn.style.marginTop = '8px';
-                                    userSpeakerBtn.style.opacity = '0.5';
-                                    userSpeakerBtn.style.transition = 'opacity 0.2s';
-                                    
-                                    userSpeakerBtn.addEventListener('mouseover', () => userSpeakerBtn.style.opacity = '1');
-                                    userSpeakerBtn.addEventListener('mouseout', () => userSpeakerBtn.style.opacity = '0.5');
-                                    
-                                    userSpeakerBtn.addEventListener('click', (event) => {
+                                    message.textContent = text;
+
+                                    const speakerBtn = document.createElement('button');
+                                    setButtonToSpeakerIcon(speakerBtn);
+                                    speakerBtn.setAttribute('data-text', text);
+                                    speakerBtn.style.background = 'none';
+                                    speakerBtn.style.border = 'none';
+                                    speakerBtn.style.fontSize = '18px';
+                                    speakerBtn.style.cursor = 'pointer';
+                                    speakerBtn.style.padding = '0';
+                                    speakerBtn.style.marginTop = '8px';
+                                    speakerBtn.style.opacity = '0.5';
+                                    speakerBtn.style.transition = 'opacity 0.2s';
+
+                                    speakerBtn.addEventListener('mouseover', () => speakerBtn.style.opacity = '1');
+                                    speakerBtn.addEventListener('mouseout', () => speakerBtn.style.opacity = '0.5');
+
+                                    speakerBtn.addEventListener('click', (event) => {
                                         const thisButton = event.currentTarget;
-                                        
-                                        // Skip if YouTube ad is playing (to prevent audio conflicts)
+
                                         if (isYouTubeAdPlaying()) {
                                             console.log('[CustomQA] Cannot play during YouTube ad');
                                             return;
                                         }
-                                        
+
                                         if (currentAudio && currentPlayingButton === thisButton) {
                                             currentAudio.stop();
                                             return;
                                         }
-                                        
-                                        // Prevent simultaneous audio playback: stop any currently playing audio from different button
+
                                         if (currentAudio && currentPlayingButton !== thisButton) {
                                             try {
                                                 currentAudio.stop();
@@ -2288,117 +2381,66 @@
                                                 // Ignore error if audio is already stopped
                                             }
                                         }
-                                        
+
                                         const gender = settings.get('gender', 'female');
+                                        const voice = settings.get('voice', 'human');
+                                        const speed = settings.get('speed', 50);
                                         const textToSpeak = thisButton.getAttribute('data-text');
+                                        const cacheKey = buildTtsCacheKey(textToSpeak, gender, speed, voice);
+                                        const cachedAudioUrl = preloadedAudioMap.get(cacheKey);
+                                        const buttonCacheKey = thisButton.getAttribute('data-audio-cache-key');
+                                        const buttonAudioUrl = buttonCacheKey === cacheKey ? thisButton.getAttribute('data-audio-url') : null;
+                                        const audioUrl = cachedAudioUrl || buttonAudioUrl;
+
+                                        if (audioUrl) {
+                                            console.log('[TTS PLAYBACK] Playing VQA from cache (zero delay):', textToSpeak.substring(0, 30) + '...');
+                                            thisButton.setAttribute('data-audio-url', audioUrl);
+                                            thisButton.setAttribute('data-audio-cache-key', cacheKey);
+                                            playAudioFromDataUrl(audioUrl, thisButton);
+                                            return;
+                                        }
+
+                                        console.log('[TTS PLAYBACK] VQA audio not cached, fetching on-demand:', textToSpeak.substring(0, 30) + '...');
                                         chrome.runtime.sendMessage({
                                             type: 'CALL_OPENAI_TTS',
                                             text: textToSpeak,
                                             gender: gender,
-                                            speed: settings.get('speed', 50)
+                                            speed: speed
                                         }, (ttsResponse) => {
                                             if (ttsResponse && ttsResponse.success) {
+                                                preloadedAudioMap.set(cacheKey, ttsResponse.audioDataUrl);
+                                                thisButton.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
+                                                thisButton.setAttribute('data-audio-cache-key', cacheKey);
                                                 playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
                                             } else {
                                                 console.error('OpenAI TTS error:', ttsResponse?.error);
                                             }
                                         });
                                     });
-                                    
-                                    userMessageContainer.appendChild(message);
-                                    userMessageContainer.appendChild(userSpeakerBtn);
-                                    vqaMessages.appendChild(userMessageContainer);
-                                });
-                                
-                                // Display answers next (gray bubbles)
-                                answers.forEach(a => {
-                                    const aiMessageContainer = document.createElement('div');
-                                    aiMessageContainer.style.display = 'flex';
-                                    aiMessageContainer.style.alignItems = 'flex-start';
-                                    aiMessageContainer.style.gap = '8px';
-                                    aiMessageContainer.style.marginBottom = '12px';
-                                    
-                                    const message = document.createElement('div');
-                                    message.className = 'chat-message bot-message';
-                                    message.style.flex = '1';
-                                    message.textContent = a.content || a.text || '';
-                                    
-                                    const answerSpeakerBtn = document.createElement('button');
-                                    setButtonToSpeakerIcon(answerSpeakerBtn);
-                                    answerSpeakerBtn.setAttribute('data-text', a.content || a.text || '');
-                                    answerSpeakerBtn.style.background = 'none';
-                                    answerSpeakerBtn.style.border = 'none';
-                                    answerSpeakerBtn.style.fontSize = '18px';
-                                    answerSpeakerBtn.style.cursor = 'pointer';
-                                    answerSpeakerBtn.style.padding = '0';
-                                    answerSpeakerBtn.style.marginTop = '8px';
-                                    answerSpeakerBtn.style.opacity = '0.5';
-                                    answerSpeakerBtn.style.transition = 'opacity 0.2s';
-                                    
-                                    answerSpeakerBtn.addEventListener('mouseover', () => answerSpeakerBtn.style.opacity = '1');
-                                    answerSpeakerBtn.addEventListener('mouseout', () => answerSpeakerBtn.style.opacity = '0.5');
-                                    
-                                    answerSpeakerBtn.addEventListener('click', (event) => {
-                                        const thisButton = event.currentTarget;
-                                        
-                                        // Skip if YouTube ad is playing (to prevent audio conflicts)
-                                        if (isYouTubeAdPlaying()) {
-                                            console.log('[CustomQA] Cannot play during YouTube ad');
-                                            return;
-                                        }
-                                        
-                                        if (currentAudio && currentPlayingButton === thisButton) {
-                                            currentAudio.stop();
-                                            return;
-                                        }
-                                        
-                                        // Prevent simultaneous audio playback: stop any currently playing audio from different button
-                                        if (currentAudio && currentPlayingButton !== thisButton) {
-                                            try {
-                                                currentAudio.stop();
-                                                currentAudio = null;
-                                                if (currentPlayingButton) {
-                                                    setButtonToSpeakerIcon(currentPlayingButton);
-                                                }
-                                                currentPlayingButton = null;
-                                            } catch (e) {
-                                                // Ignore error if audio is already stopped
-                                            }
-                                        }
-                                        
-                                        const gender = settings.get('gender', 'female');
-                                        const textToSpeak = thisButton.getAttribute('data-text');
-                                        chrome.runtime.sendMessage({
-                                            type: 'CALL_OPENAI_TTS',
-                                            text: textToSpeak,
-                                            gender: gender,
-                                            speed: settings.get('speed', 50)
-                                        }, (ttsResponse) => {
-                                            if (ttsResponse && ttsResponse.success) {
-                                                playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
-                                            } else {
-                                                console.error('OpenAI TTS error:', ttsResponse?.error);
-                                            }
-                                        });
-                                    });
-                    
-                    aiMessageContainer.appendChild(message);
-                    aiMessageContainer.appendChild(answerSpeakerBtn);
-                    vqaMessages.appendChild(aiMessageContainer);
-                });
-                
-                                console.log('[CustomQA] VQA display complete - Questions:', questions.length, 'Answers:', answers.length, 'Total:', allMessages.length);
+
+                                    messageContainer.appendChild(message);
+                                    messageContainer.appendChild(speakerBtn);
+                                    vqaMessages.appendChild(messageContainer);
+                                };
+
+                                orderedMessages.forEach(renderVqaMessage);
+
+                                console.log('[CustomQA] VQA display complete - Messages:', orderedMessages.length);
                 
                 // Auto-preload all displayed VQA audio
                 setTimeout(() => {
                     console.log('[CustomQA] Preloading all previously loaded VQA audio...');
                     const gender = settings.get('gender', 'female');
-                    
+                    const voice = settings.get('voice', 'human');
+                    const speed = settings.get('speed', 50);
+
                     const allVqaButtons = sidebar.querySelectorAll('.vqa-sub-tab-content [role="tabpanel"] button[data-text]');
-                    allVqaButtons.forEach(btn => {
+                    allVqaButtons.forEach((btn) => {
                         const text = btn.getAttribute('data-text');
-                        if (text && !preloadedAudioMap.has(text)) {
-                            preloadAndStoreAudio(text, btn, gender);
+                        if (!text) return;
+                        const cacheKey = buildTtsCacheKey(text, gender, speed, voice);
+                        if (!preloadedAudioMap.has(cacheKey)) {
+                            preloadAndStoreAudio(text, btn, gender, voice, speed);
                         }
                     });
                 }, 100);
@@ -2567,15 +2609,21 @@
                 const clearAudioCache = () => {
                     console.log('[CustomQA] Clearing audio cache');
                     preloadedAudioMap.clear();
-                    // Also remove data-audio-url attributes from all buttons
-                    const allButtons = sidebar.querySelectorAll('button[data-audio-url]');
-                    allButtons.forEach(btn => btn.removeAttribute('data-audio-url'));
+                    audioBufferCache.clear();
+                    // Also remove cached audio attributes from all buttons
+                    const allButtons = sidebar.querySelectorAll('button[data-audio-url], button[data-audio-cache-key]');
+                    allButtons.forEach((btn) => {
+                        btn.removeAttribute('data-audio-url');
+                        btn.removeAttribute('data-audio-cache-key');
+                    });
                 };
 
                 // Function to preload all visible audio when settings change
                 const preloadAllVisibleAudio = () => {
-                    // Get current gender setting
+                    // Get current presentation settings
                     const gender = settings.get('gender', 'female');
+                    const voice = settings.get('voice', 'human');
+                    const speed = settings.get('speed', 50);
                     
                     // Preload AD audio
                     const adSpeakerButtons = sidebar.querySelectorAll('#ad-messages [id^="ad-speaker-btn"]');
@@ -2584,18 +2632,20 @@
                         if (text) {
                             // Always preload (don't check for existing data-audio-url)
                             console.log('[CustomQA] Preloading AD audio for:', text.substring(0, 30) + '...');
-                            preloadAndStoreAudio(text, btn, gender);
+                            preloadAndStoreAudio(text, btn, gender, voice, speed);
                         }
                     });
                     
                     // Preload VQA audio (both questions and answers)
-                    const vqaSpeakerButtons = sidebar.querySelectorAll('#chat-tab [role="tabpanel"] button[data-text]');
+                    const vqaSpeakerButtons = sidebar.querySelectorAll(
+                        '#vqa-tab .chat-messages button[data-text], .vqa-sub-tab-content .chat-messages button[data-text]'
+                    );
                     vqaSpeakerButtons.forEach(btn => {
                         const text = btn.getAttribute('data-text');
                         if (text) {
                             // Always preload (don't check for existing data-audio-url)
                             console.log('[CustomQA] Preloading VQA audio for:', text.substring(0, 30) + '...');
-                            preloadAndStoreAudio(text, btn, gender);
+                            preloadAndStoreAudio(text, btn, gender, voice, speed);
                         }
                     });
                     
@@ -2811,14 +2861,11 @@
 
                 // Shared debounced handler for AD length (also used by VQA generation)
                 const debouncedLengthChange = debounce((value) => {
-                    preloadedAudioMap.clear();
                     settings.set('adLength', value);
+                    // Length change doesn't affect TTS cache keys, so don't clear audio cache
                     const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                     if (activeTab) {
                         saveAllSettings(activeTab);
-                        setTimeout(() => {
-                            preloadAllVisibleAudio();
-                        }, 50);
                     }
                 }, 300);
                 
@@ -2854,14 +2901,44 @@
                 if (adSpeedSlider) {
                     // Debounce handler to only update storage/DB after dragging stops
                     const debouncedSpeedChange = debounce((value) => {
-                        settings.set('speed', value);
-                        preloadedAudioMap.clear();
+                        const newSpeed = Number(value);
+                        const currentSpeed = settings.get('speed', 50);
+                        
+                        if (newSpeed !== currentSpeed) {
+                            console.log(`[CustomQA] Speed changed from ${currentSpeed} to ${newSpeed}`);
+                            settings.set('speed', newSpeed);
+                            
+                            // Smart cache invalidation: only clear buttons that don't have new speed combo cached
+                            const gender = settings.get('gender', 'female');
+                            const voice = settings.get('voice', 'human');
+                            const adSpeakerButtons = sidebar.querySelectorAll('#ad-messages [id^="ad-speaker-btn"]');
+                            const vqaSpeakerButtons = sidebar.querySelectorAll('#vqa-tab .chat-messages button[data-text]');
+                            
+                            adSpeakerButtons.forEach(btn => {
+                                const text = btn.getAttribute('data-text');
+                                const newKey = buildTtsCacheKey(text, gender, newSpeed, voice);
+                                if (!preloadedAudioMap.has(newKey)) {
+                                    btn.removeAttribute('data-audio-url');
+                                    btn.removeAttribute('data-audio-cache-key');
+                                }
+                            });
+                            
+                            vqaSpeakerButtons.forEach(btn => {
+                                const text = btn.getAttribute('data-text');
+                                const newKey = buildTtsCacheKey(text, gender, newSpeed, voice);
+                                if (!preloadedAudioMap.has(newKey)) {
+                                    btn.removeAttribute('data-audio-url');
+                                    btn.removeAttribute('data-audio-cache-key');
+                                }
+                            });
+                            
+                            // Preload all audio with new speed
+                            preloadAllVisibleAudio();
+                        }
+                        
                         const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                         if (activeTab) {
                             saveAllSettings(activeTab);
-                            setTimeout(() => {
-                                preloadAllVisibleAudio();
-                            }, 50);
                         }
                     }, 300);
                     
@@ -2874,14 +2951,44 @@
                 if (vqaSpeedSlider) {
                     // Debounce handler to only update storage/DB after dragging stops
                     const debouncedSpeedChange = debounce((value) => {
-                        settings.set('speed', value);
-                        preloadedAudioMap.clear();
+                        const newSpeed = Number(value);
+                        const currentSpeed = settings.get('speed', 50);
+                        
+                        if (newSpeed !== currentSpeed) {
+                            console.log(`[CustomQA] Speed changed from ${currentSpeed} to ${newSpeed}`);
+                            settings.set('speed', newSpeed);
+                            
+                            // Smart cache invalidation: only clear buttons that don't have new speed combo cached
+                            const gender = settings.get('gender', 'female');
+                            const voice = settings.get('voice', 'human');
+                            const adSpeakerButtons = sidebar.querySelectorAll('#ad-messages [id^="ad-speaker-btn"]');
+                            const vqaSpeakerButtons = sidebar.querySelectorAll('#vqa-tab .chat-messages button[data-text]');
+                            
+                            adSpeakerButtons.forEach(btn => {
+                                const text = btn.getAttribute('data-text');
+                                const newKey = buildTtsCacheKey(text, gender, newSpeed, voice);
+                                if (!preloadedAudioMap.has(newKey)) {
+                                    btn.removeAttribute('data-audio-url');
+                                    btn.removeAttribute('data-audio-cache-key');
+                                }
+                            });
+                            
+                            vqaSpeakerButtons.forEach(btn => {
+                                const text = btn.getAttribute('data-text');
+                                const newKey = buildTtsCacheKey(text, gender, newSpeed, voice);
+                                if (!preloadedAudioMap.has(newKey)) {
+                                    btn.removeAttribute('data-audio-url');
+                                    btn.removeAttribute('data-audio-cache-key');
+                                }
+                            });
+                            
+                            // Preload all audio with new speed
+                            preloadAllVisibleAudio();
+                        }
+                        
                         const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                         if (activeTab) {
                             saveAllSettings(activeTab);
-                            setTimeout(() => {
-                                preloadAllVisibleAudio();
-                            }, 50);
                         }
                     }, 300);
                     
@@ -2934,15 +3041,49 @@
                             const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                             const otherTab = sidebar.querySelector('.tab-content[style*="display: none"]');
                             syncPresentationSettings(activeTab, otherTab);
-                            // Save to SettingsManager
-                            settings.set('gender', button.dataset.gender);
-                            // When gender changes, immediately clear cache and preload with new gender
-                            console.log('[CustomQA] Gender changed - clearing preloaded audio');
-                            clearAudioCache(); // Clear cache so audio regenerates with new gender
-                            preloadAllVisibleAudio();
-                            // Save all settings when gender changes
-                            if (activeTab) {
-                                saveAllSettings(activeTab);
+                            const newGender = button.dataset.gender;
+                            const currentGender = settings.get('gender', 'female');
+                            
+                            if (newGender !== currentGender) {
+                                // Gender changed: check if new combination exists in cache
+                                console.log(`[CustomQA] Gender changed from ${currentGender} to ${newGender}`);
+                                settings.set('gender', newGender);
+                                
+                                // Smart cache invalidation: only clear buttons that don't have new gender combo cached
+                                const voice = settings.get('voice', 'human');
+                                const speed = settings.get('speed', 50);
+                                const adSpeakerButtons = sidebar.querySelectorAll('#ad-messages [id^="ad-speaker-btn"]');
+                                const vqaSpeakerButtons = sidebar.querySelectorAll('#vqa-tab .chat-messages button[data-text]');
+                                
+                                // Remove cached audio attributes for buttons, but keep preloaded map intact
+                                // This forces reuse from map on next click
+                                adSpeakerButtons.forEach(btn => {
+                                    const text = btn.getAttribute('data-text');
+                                    const cachedKey = btn.getAttribute('data-audio-cache-key');
+                                    const newKey = buildTtsCacheKey(text, newGender, speed, voice);
+                                    // Only clear if new key doesn't exist in map
+                                    if (!preloadedAudioMap.has(newKey)) {
+                                        btn.removeAttribute('data-audio-url');
+                                        btn.removeAttribute('data-audio-cache-key');
+                                    }
+                                });
+                                
+                                vqaSpeakerButtons.forEach(btn => {
+                                    const text = btn.getAttribute('data-text');
+                                    const newKey = buildTtsCacheKey(text, newGender, speed, voice);
+                                    if (!preloadedAudioMap.has(newKey)) {
+                                        btn.removeAttribute('data-audio-url');
+                                        btn.removeAttribute('data-audio-cache-key');
+                                    }
+                                });
+                                
+                                // Preload all audio with new gender
+                                preloadAllVisibleAudio();
+                                
+                                // Save all settings when gender changes
+                                if (activeTab) {
+                                    saveAllSettings(activeTab);
+                                }
                             }
                         }
                         
@@ -2951,12 +3092,45 @@
                             const activeTab = sidebar.querySelector('.tab-content:not([style*="display: none"])');
                             const otherTab = sidebar.querySelector('.tab-content[style*="display: none"]');
                             syncPresentationSettings(activeTab, otherTab);
-                            settings.set('voice', button.dataset.voice);
-                            clearAudioCache();
-                            preloadAllVisibleAudio();
-                            // Save voice changes to database
-                            if (activeTab) {
-                                saveAllSettings(activeTab);
+                            const newVoice = button.dataset.voice;
+                            const currentVoice = settings.get('voice', 'human');
+                            
+                            if (newVoice !== currentVoice) {
+                                console.log(`[CustomQA] Voice changed from ${currentVoice} to ${newVoice}`);
+                                settings.set('voice', newVoice);
+                                
+                                // Smart cache invalidation: only clear buttons that don't have new voice combo cached
+                                const gender = settings.get('gender', 'female');
+                                const speed = settings.get('speed', 50);
+                                const adSpeakerButtons = sidebar.querySelectorAll('#ad-messages [id^="ad-speaker-btn"]');
+                                const vqaSpeakerButtons = sidebar.querySelectorAll('#vqa-tab .chat-messages button[data-text]');
+                                
+                                // Remove cached audio attributes for buttons, but keep preloaded map intact
+                                adSpeakerButtons.forEach(btn => {
+                                    const text = btn.getAttribute('data-text');
+                                    const newKey = buildTtsCacheKey(text, gender, speed, newVoice);
+                                    if (!preloadedAudioMap.has(newKey)) {
+                                        btn.removeAttribute('data-audio-url');
+                                        btn.removeAttribute('data-audio-cache-key');
+                                    }
+                                });
+                                
+                                vqaSpeakerButtons.forEach(btn => {
+                                    const text = btn.getAttribute('data-text');
+                                    const newKey = buildTtsCacheKey(text, gender, speed, newVoice);
+                                    if (!preloadedAudioMap.has(newKey)) {
+                                        btn.removeAttribute('data-audio-url');
+                                        btn.removeAttribute('data-audio-cache-key');
+                                    }
+                                });
+                                
+                                // Preload all audio with new voice
+                                preloadAllVisibleAudio();
+                                
+                                // Save voice changes to database
+                                if (activeTab) {
+                                    saveAllSettings(activeTab);
+                                }
                             }
                         }
                         
@@ -3223,15 +3397,21 @@
                                             return;
                                         }
 
+                                        if (!response.text || !response.text.trim()) {
+                                            console.log('[CustomQA] Whisper returned empty transcription; ignoring.');
+                                            return;
+                                        }
+
                                         chatInput.value = response.text;
                                         chatInput.dispatchEvent(new Event('input', { bubbles: true }));
                                         console.log('[CustomQA] Transcribed:', response.text);
 
                                         const textToSpeak = chatInput.value;
                                         const gender = settings.get('gender', 'female');
+                                        const voice = settings.get('voice', 'human');
                                         const speed = settings.get('speed', 50);
                                         const chatSpeakerButton = sidebar.querySelector('#chat-speaker-button');
-                                        const cacheKey = `${textToSpeak}::${gender}::${speed}`;
+                                        const cacheKey = buildTtsCacheKey(textToSpeak, gender, speed, voice);
 
                                         if (textToSpeak && textToSpeak.trim()) {
                                             console.log('[CustomQA] Auto-playing recorded question...');
@@ -3253,7 +3433,7 @@
                                                         chatSpeakerButton.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
                                                         chatSpeakerButton.setAttribute('data-audio-cache-key', cacheKey);
                                                     }
-                                                    playAudioFromDataUrl(ttsResponse.audioDataUrl, chatSpeakerButton);
+                                                    playAudioFromDataUrl(ttsResponse.audioDataUrl, chatSpeakerButton, null, 0, cacheKey);
                                                 } else {
                                                     if (chatSpeakerButton) {
                                                         setButtonToSpeakerIcon(chatSpeakerButton);
@@ -3377,16 +3557,17 @@
                     const chatInput = sidebar.querySelector('#vqa-tab .chat-input');
                     const textToSpeak = chatInput.value;
                     const gender = settings.get('gender', 'female');
+                    const voice = settings.get('voice', 'human');
                     const speed = settings.get('speed', 50);
 
                     if (textToSpeak) {
                         const audioUrl = thisButton.getAttribute('data-audio-url');
                         const cachedKey = thisButton.getAttribute('data-audio-cache-key');
-                        const currentKey = `${textToSpeak}::${gender}::${speed}`;
+                        const currentKey = buildTtsCacheKey(textToSpeak, gender, speed, voice);
                         const canUseCachedAudio = !!audioUrl && cachedKey === currentKey;
 
                         if (canUseCachedAudio) {
-                            playAudioFromDataUrl(audioUrl, thisButton);
+                            playAudioFromDataUrl(audioUrl, thisButton, null, 0, currentKey);
                         } else {
                             chrome.runtime.sendMessage({
                                 type: 'CALL_OPENAI_TTS',
@@ -3398,7 +3579,7 @@
                                     thisButton.setAttribute('data-text', textToSpeak);
                                     thisButton.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
                                     thisButton.setAttribute('data-audio-cache-key', currentKey);
-                                    playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
+                                    playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, 0, currentKey);
                                 } else {
                                     console.error('OpenAI TTS error:', ttsResponse?.error);
                                 }
@@ -3869,20 +4050,24 @@
 
                                 // Preload TTS before playback to reduce first-play delays.
                                 const preloadGender = sidebar.querySelector('#audio-descriptions-tab .pill-button[data-gender].active')?.dataset.gender || 'female';
+                                const preloadVoice = settings.get('voice', 'human');
+                                const preloadSpeed = settings.get('speed', 50);
                                 const preloadPromises = adSchedule.map((ad) => new Promise((resolve) => {
                                     chrome.runtime.sendMessage({
                                         type: 'PRELOAD_OPENAI_TTS',
                                         text: ad.description,
                                         gender: preloadGender,
-                                        speed: settings.get('speed', 50)
+                                        speed: preloadSpeed
                                     }, (response) => {
                                         if (response && response.success && response.audioDataUrl) {
-                                            const key = response.text || ad.description;
-                                            preloadedAudioMap.set(key, response.audioDataUrl);
+                                            const cacheKey = buildTtsCacheKey(ad.description, preloadGender, preloadSpeed, preloadVoice);
+                                            preloadedAudioMap.set(cacheKey, response.audioDataUrl);
                                             const matchingButtons = sidebar.querySelectorAll('button[data-text]');
                                             matchingButtons.forEach((btn) => {
-                                                if (btn.getAttribute('data-text') === key) {
+                                                const existingKey = btn.getAttribute('data-audio-cache-key');
+                                                if (btn.getAttribute('data-text') === ad.description && (!existingKey || existingKey === cacheKey)) {
                                                     btn.setAttribute('data-audio-url', response.audioDataUrl);
+                                                    btn.setAttribute('data-audio-cache-key', cacheKey);
                                                 }
                                             });
                                         } else {
@@ -4166,8 +4351,13 @@
                         speakerBtn.setAttribute('data-text', desc.description);
                         speakerBtn.setAttribute('data-timestamp', currentTs);
                         speakerBtn.setAttribute('data-video-url', currentVideoUrl || window.location.href);
-                        if (preloadedAudioMap.has(desc.description)) {
-                            speakerBtn.setAttribute('data-audio-url', preloadedAudioMap.get(desc.description));
+                        const preloadGender = settings.get('gender', 'female');
+                        const preloadVoice = settings.get('voice', 'human');
+                        const preloadSpeed = settings.get('speed', 50);
+                        const preloadKey = buildTtsCacheKey(desc.description, preloadGender, preloadSpeed, preloadVoice);
+                        if (preloadedAudioMap.has(preloadKey)) {
+                            speakerBtn.setAttribute('data-audio-url', preloadedAudioMap.get(preloadKey));
+                            speakerBtn.setAttribute('data-audio-cache-key', preloadKey);
                         }
                         speakerBtn.style.background = 'none';
                         speakerBtn.style.border = 'none';
@@ -4218,60 +4408,41 @@
                             }
                             
                             const textToSpeak = thisButton.getAttribute('data-text');
-                            const cachedAudioUrl = textToSpeak && preloadedAudioMap.has(textToSpeak) ? preloadedAudioMap.get(textToSpeak) : null;
-                            const buttonAudioUrl = thisButton.getAttribute('data-audio-url');
+                            const gender = settings.get('gender', 'female');
+                            const voice = settings.get('voice', 'human');
+                            const speed = settings.get('speed', 50);
+                            const cacheKey = buildTtsCacheKey(textToSpeak, gender, speed, voice);
+                            const cachedAudioUrl = preloadedAudioMap.get(cacheKey);
+                            const buttonCacheKey = thisButton.getAttribute('data-audio-cache-key');
+                            const buttonAudioUrl = buttonCacheKey === cacheKey ? thisButton.getAttribute('data-audio-url') : null;
 
                             // Use cached audio if available, otherwise fall back to button attribute
                             const audioUrl = cachedAudioUrl || buttonAudioUrl;
 
                             if (audioUrl) {
-                                const adTimestamp = parseFloat(thisButton.getAttribute('data-timestamp')) || 0;
-                                const videoTime = video?.currentTime || 0;
-                                const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
-                                const isPauseOn = pauseAdButton !== null;
+                                const delayMs = 0;
                                 
-                                let delayMs = 0;
-                                if (isPauseOn) {
-                                    // Pause is ON: 1 second delay before audio
-                                    delayMs = 1000;
-                                } else {
-                                    // Pause is OFF: play audio 5 seconds before the AD timestamp
-                                    const timeUntilAd = (adTimestamp - videoTime) * 1000; // Convert to ms
-                                    delayMs = Math.max(0, timeUntilAd - 5000); // Play 5s before
-                                }
-                                
-                                playAudioFromDataUrl(audioUrl, thisButton, null, delayMs);
+                                playAudioFromDataUrl(audioUrl, thisButton, null, delayMs, cacheKey);
                                 // Update button attribute with current cached URL
                                 if (cachedAudioUrl) {
                                     thisButton.setAttribute('data-audio-url', cachedAudioUrl);
+                                    thisButton.setAttribute('data-audio-cache-key', cacheKey);
                                 }
                             } else if (textToSpeak) {
-                                const adTimestamp = parseFloat(thisButton.getAttribute('data-timestamp')) || 0;
-                                const videoTime = video?.currentTime || 0;
-                                const pauseAdButton = sidebar.querySelector('#pause-ad-group .pill-button[data-action="pause-on"].active');
-                                const isPauseOn = pauseAdButton !== null;
-                                
-                                let delayMs = 0;
-                                if (isPauseOn) {
-                                    // Pause is ON: 1 second delay before audio
-                                    delayMs = 1000;
-                                } else {
-                                    // Pause is OFF: play audio 5 seconds before the AD timestamp
-                                    const timeUntilAd = (adTimestamp - videoTime) * 1000; // Convert to ms
-                                    delayMs = Math.max(0, timeUntilAd - 5000); // Play 5s before
-                                }
+                                const delayMs = 0;
                                 
                                 chrome.runtime.sendMessage({
                                     type: 'CALL_OPENAI_TTS',
                                     text: textToSpeak,
                                     gender: gender,
-                                    speed: settings.get('speed', 50)
+                                    speed: speed
                                 }, (ttsResponse) => {
                                     if (ttsResponse && ttsResponse.success) {
-                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, delayMs);
+                                        playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, delayMs, cacheKey);
                                         // Cache and update button attribute
-                                        preloadedAudioMap.set(textToSpeak, ttsResponse.audioDataUrl);
+                                        preloadedAudioMap.set(cacheKey, ttsResponse.audioDataUrl);
                                         thisButton.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
+                                        thisButton.setAttribute('data-audio-cache-key', cacheKey);
                                     } else {
                                         console.error('OpenAI TTS error:', ttsResponse?.error);
                                     }
@@ -4289,11 +4460,16 @@
                         console.log('[CustomQA] Preloading all newly displayed AD audio...');
                         const allAdButtons = sidebar.querySelectorAll('#ad-messages [id^="ad-speaker-btn"]');
                         const gender = settings.get('gender', 'female');
+                        const voice = settings.get('voice', 'human');
+                        const speed = settings.get('speed', 50);
                         
                         allAdButtons.forEach(btn => {
                             const text = btn.getAttribute('data-text');
-                            if (text && !preloadedAudioMap.has(text)) {
-                                preloadAndStoreAudio(text, btn, gender);
+                            if (text) {
+                                const cacheKey = buildTtsCacheKey(text, gender, speed, voice);
+                                if (!preloadedAudioMap.has(cacheKey)) {
+                                    preloadAndStoreAudio(text, btn, gender, voice, speed);
+                                }
                             }
                         });
                     }, 100);
@@ -4399,6 +4575,9 @@
                                 }
                                 
                                 const gender = settings.get('gender', 'female');
+                                const voice = settings.get('voice', 'human');
+                                const speed = settings.get('speed', 50);
+                                const cacheKey = buildTtsCacheKey(nextAd.description, gender, speed, voice);
                                 
                                 const speakerBtn = sidebar.querySelector(`#${nextAd.buttonId}`);
                                 if (!speakerBtn) {
@@ -4407,7 +4586,10 @@
                                     return;
                                 }
                                 
-                                const audioUrl = speakerBtn.getAttribute('data-audio-url');
+                                const cachedAudioUrl = preloadedAudioMap.get(cacheKey);
+                                const buttonCacheKey = speakerBtn.getAttribute('data-audio-cache-key');
+                                const buttonAudioUrl = buttonCacheKey === cacheKey ? speakerBtn.getAttribute('data-audio-url') : null;
+                                const audioUrl = cachedAudioUrl || buttonAudioUrl;
 
                                 if (audioUrl) {
                                     playAudioFromDataUrl(audioUrl, speakerBtn, () => {
@@ -4416,24 +4598,25 @@
                                             console.log('[AD] Resuming video');
                                             video.play();
                                         }
-                                    });
+                                    }, 0, cacheKey);
                                 } else {
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
                                         text: nextAd.description,
                                         gender: gender,
-                                        speed: settings.get('speed', 50)
+                                        speed: speed
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
-                                            preloadedAudioMap.set(nextAd.description, ttsResponse.audioDataUrl);
+                                            preloadedAudioMap.set(cacheKey, ttsResponse.audioDataUrl);
                                             speakerBtn.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
+                                            speakerBtn.setAttribute('data-audio-cache-key', cacheKey);
                                             playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn, () => {
                                                 console.log('[AD] AD audio ended');
                                                 if (shouldPause) {
                                                     console.log('[AD] Resuming video');
                                                     video.play();
                                                 }
-                                            });
+                                            }, 0, cacheKey);
                                         } else {
                                             console.error('OpenAI TTS error:', ttsResponse?.error);
                                             isPlayingAd = false;
@@ -4576,20 +4759,31 @@
                                 }
                                 
                                 const genderUser = settings.get('gender', 'female');
+                                const voiceUser = settings.get('voice', 'human');
+                                const speedUser = settings.get('speed', 50);
                                 const textToSpeak = thisButton.getAttribute('data-text');
-                                const audioUrl = thisButton.getAttribute('data-audio-url');
+                                const cacheKey = buildTtsCacheKey(textToSpeak, genderUser, speedUser, voiceUser);
+                                const cachedAudioUrl = preloadedAudioMap.get(cacheKey);
+                                const buttonCacheKey = thisButton.getAttribute('data-audio-cache-key');
+                                const buttonAudioUrl = buttonCacheKey === cacheKey ? thisButton.getAttribute('data-audio-url') : null;
+                                const audioUrl = cachedAudioUrl || buttonAudioUrl;
 
                                 if (audioUrl) {
-                                    playAudioFromDataUrl(audioUrl, thisButton);
+                                    thisButton.setAttribute('data-audio-url', audioUrl);
+                                    thisButton.setAttribute('data-audio-cache-key', cacheKey);
+                                    playAudioFromDataUrl(audioUrl, thisButton, null, 0, cacheKey);
                                 } else if (textToSpeak) {
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
                                         text: textToSpeak,
                                         gender: genderUser,
-                                        speed: settings.get('speed', 50)
+                                        speed: speedUser
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
-                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
+                                            preloadedAudioMap.set(cacheKey, ttsResponse.audioDataUrl);
+                                            thisButton.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
+                                            thisButton.setAttribute('data-audio-cache-key', cacheKey);
+                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, 0, cacheKey);
                                         } else {
                                             console.error('OpenAI TTS error:', ttsResponse?.error);
                                         }
@@ -4611,7 +4805,9 @@
                             chatMessages.appendChild(userMessageContainer);
 
                             const genderUser = settings.get('gender', 'female');
-                            preloadAndStoreAudio(question, userSpeakerBtn, genderUser);
+                            const voiceUser = settings.get('voice', 'human');
+                            const speedUser = settings.get('speed', 50);
+                            preloadAndStoreAudio(question, userSpeakerBtn, genderUser, voiceUser, speedUser);
 
                             chatInput.value = '';
                             chatInput.style.height = 'auto'; // Reset height
@@ -4674,20 +4870,31 @@
                                 }
 
                                 const textToSpeak = aiTextSpan.textContent;
-                                const audioUrl = thisButton.getAttribute('data-audio-url');
                                 const genderAI = settings.get('gender', 'female');
+                                const voiceAI = settings.get('voice', 'human');
+                                const speedAI = settings.get('speed', 50);
+                                const cacheKey = buildTtsCacheKey(textToSpeak, genderAI, speedAI, voiceAI);
+                                const cachedAudioUrl = preloadedAudioMap.get(cacheKey);
+                                const buttonCacheKey = thisButton.getAttribute('data-audio-cache-key');
+                                const buttonAudioUrl = buttonCacheKey === cacheKey ? thisButton.getAttribute('data-audio-url') : null;
+                                const audioUrl = cachedAudioUrl || buttonAudioUrl;
 
                                 if (audioUrl) {
-                                    playAudioFromDataUrl(audioUrl, thisButton);
+                                    thisButton.setAttribute('data-audio-url', audioUrl);
+                                    thisButton.setAttribute('data-audio-cache-key', cacheKey);
+                                    playAudioFromDataUrl(audioUrl, thisButton, null, 0, cacheKey);
                                 } else if (textToSpeak && textToSpeak !== 'Thinking...') {
                                     chrome.runtime.sendMessage({
                                         type: 'CALL_OPENAI_TTS',
                                         text: textToSpeak,
                                         gender: genderAI,
-                                        speed: settings.get('speed', 50)
+                                        speed: speedAI
                                     }, (ttsResponse) => {
                                         if (ttsResponse && ttsResponse.success) {
-                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton);
+                                            preloadedAudioMap.set(cacheKey, ttsResponse.audioDataUrl);
+                                            thisButton.setAttribute('data-audio-url', ttsResponse.audioDataUrl);
+                                            thisButton.setAttribute('data-audio-cache-key', cacheKey);
+                                            playAudioFromDataUrl(ttsResponse.audioDataUrl, thisButton, null, 0, cacheKey);
                                         } else {
                                             console.error('OpenAI TTS error:', ttsResponse?.error);
                                         }
@@ -4862,20 +5069,19 @@ Answer in approximately ${wordCount} words.`;
                                         }
                                         
                                         const genderResp = settings.get('gender', 'female');
-                                        preloadAndStoreAudio(responseWithTimestamp, speakerBtn, genderResp);
-
-                                        chrome.runtime.sendMessage({
-                                            type: 'CALL_OPENAI_TTS',
-                                            text: responseWithTimestamp,
-                                            gender: genderResp,
-                                            speed: settings.get('speed', 50)
-                                        }, (ttsResponse) => {
-                                            if (ttsResponse && ttsResponse.success) {
-                                                playAudioFromDataUrl(ttsResponse.audioDataUrl, speakerBtn);
-                                            } else {
-                                                console.error('OpenAI TTS error:', ttsResponse?.error);
+                                        const voiceResp = settings.get('voice', 'human');
+                                        const speedResp = settings.get('speed', 50);
+                                        // Preload and auto-play the response audio once ready
+                                        preloadAndStoreAudio(
+                                            responseWithTimestamp,
+                                            speakerBtn,
+                                            genderResp,
+                                            voiceResp,
+                                            speedResp,
+                                            (audioUrl, cacheKey) => {
+                                                playAudioFromDataUrl(audioUrl, speakerBtn, null, 0, cacheKey);
                                             }
-                                        });
+                                        );
                                     } else {
                                         aiTextSpan.textContent = `Error: ${response?.error || 'Could not generate response'}`;
                                         console.error('Gemini API error:', response?.error);

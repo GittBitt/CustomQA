@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { OpenAI } from 'openai';
 import fetch, { FormData, Blob } from 'node-fetch';
+import https from 'https';
 
 dotenv.config();
 
@@ -15,6 +16,45 @@ const API_KEY = process.env.FIREBASE_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const GEMINI_MAX_OUTPUT_TOKENS = Number.parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS || '4096', 10);
 const GEMINI_AD_MAX_OUTPUT_TOKENS = Number.parseInt(process.env.GEMINI_AD_MAX_OUTPUT_TOKENS || '8192', 10);
+
+// Keep-alive agent for TLS connection reuse to reduce per-request latency
+const HTTPS_AGENT = new https.Agent({ keepAlive: true });
+const DEFAULT_FETCH_TIMEOUT_MS = Number.parseInt(process.env.DEFAULT_FETCH_TIMEOUT_MS || '15000', 10);
+
+// Helper to perform fetch with a timeout and the keep-alive agent
+async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  const mergedOptions = {
+    ...options,
+    signal: controller.signal,
+    // Use keep-alive agent for HTTPS requests when not explicitly provided
+    agent: options.agent || HTTPS_AGENT
+  };
+
+  try {
+    return await fetch(url, mergedOptions);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Simple in-memory token cache to avoid verifying the same ID token repeatedly
+const tokenCache = new Map(); // token -> { user: { uid, email }, expiresAt }
+
+function decodeJwtPayload(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const payload = parts[1];
+    const padded = payload.padEnd(payload.length + (4 - (payload.length % 4)) % 4, '=');
+    const decoded = Buffer.from(padded.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    return JSON.parse(decoded);
+  } catch (e) {
+    return null;
+  }
+}
 
 function clampTokens(value, fallback) {
   if (!Number.isFinite(value) || value <= 0) return fallback;
@@ -65,10 +105,19 @@ async function verifyToken(req, res, next) {
   }
 
   try {
+    // Fast-path: check in-memory cache
+    const cached = tokenCache.get(token);
+    if (cached && cached.expiresAt && Date.now() < cached.expiresAt) {
+      req.user = cached.user;
+      console.log('[Token] Cache hit for token, user:', req.user.email);
+      return next();
+    }
+
     console.log('[Token] Verifying token:', `${token.substring(0, 20)}...`);
-    
+
     // Verify token via Firebase REST API
-    const response = await fetch(
+    const tokenStart = Date.now();
+    const response = await fetchWithTimeout(
       `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${API_KEY}`,
       {
         method: 'POST',
@@ -81,7 +130,7 @@ async function verifyToken(req, res, next) {
       }
     );
 
-    console.log('[Token] Firebase response status:', response.status);
+    console.log('[Token] Firebase response status:', response.status, 'ms:', Date.now() - tokenStart);
 
     if (!response.ok) {
       const errorData = await response.json();
@@ -97,14 +146,23 @@ async function verifyToken(req, res, next) {
       console.error('[Token] No user found in Firebase response');
       throw new Error('No user found');
     }
-    
+
     const user = data.users[0];
     console.log('[Token] User verified:', user.email);
-    
+
+    // Compute expiration: prefer token's `exp` claim if present, else fallback to 1 hour
+    const decoded = decodeJwtPayload(token) || {};
+    const expMs = decoded.exp ? decoded.exp * 1000 : (Date.now() + 60 * 60 * 1000);
+    const expiresAt = Math.max(Date.now() + 60 * 1000, expMs - 60 * 1000); // ensure at least 60s, and trim 60s safety margin
+
     req.user = {
       uid: user.localId,
       email: user.email
     };
+
+    // Cache the verified token to avoid repeated lookups
+    tokenCache.set(token, { user: req.user, expiresAt });
+
     next();
   } catch (error) {
     console.error('[Token] Verification error:', error.message);
@@ -422,11 +480,22 @@ app.post('/api/videos/vqa', verifyToken, async (req, res) => {
     const idToken = req.headers.authorization.split('Bearer ')[1];
     const videoId = Buffer.from(videoUrl).toString('base64').replace(/[+/=]/g, '');
 
+    let mergedMessages = Array.isArray(messages) ? messages.slice() : [];
+    try {
+      const existingDoc = await firestoreCall('GET', `/users/${req.user.uid}/videos/${videoId}`, null, idToken);
+      const existingMessages = fromFirestore(existingDoc?.fields?.vqaMessages) || [];
+      if (Array.isArray(existingMessages) && existingMessages.length > 0) {
+        mergedMessages = [...existingMessages, ...mergedMessages];
+      }
+    } catch (mergeError) {
+      console.warn('VQA history merge skipped:', mergeError.message);
+    }
+
     const fields = {
       videoUrl: toFirestore(videoUrl),
       videoLength: toFirestore(videoLength),
       customizations: toFirestore(customizations),
-      vqaMessages: toFirestore(messages),
+      vqaMessages: toFirestore(mergedMessages),
       vqaUpdatedAt: { timestampValue: new Date().toISOString() }
     };
 
@@ -508,26 +577,45 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       }
     });
 
-    let response = await fetch(geminiUrl, {
+    const geminiRequestPayload = JSON.stringify(buildRequestBody(urlGroundedParts, true));
+    const geminiTimeoutMs = isAdRequest
+      ? Number.parseInt(process.env.GEMINI_FETCH_TIMEOUT_MS || '45000', 10)
+      : DEFAULT_FETCH_TIMEOUT_MS;
+
+    const fetchGemini = (payload, timeoutMs) => fetchWithTimeout(geminiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(buildRequestBody(urlGroundedParts, true))
-    });
+      body: payload
+    }, timeoutMs);
+
+    const geminiStart = Date.now();
+    let response;
+    try {
+      response = await fetchGemini(geminiRequestPayload, geminiTimeoutMs);
+    } catch (error) {
+      if (error?.name === 'AbortError' && isAdRequest) {
+        console.warn('[Gemini] Request timed out; retrying with extended timeout');
+        response = await fetchGemini(
+          geminiRequestPayload,
+          Math.max(geminiTimeoutMs * 2, geminiTimeoutMs + 15000)
+        );
+      } else {
+        throw error;
+      }
+    }
+    console.log('[Gemini] Time to first response (ms):', Date.now() - geminiStart);
 
     // Some requests reject URL-grounding args. Retry as text-only to keep AD generation working.
     if (!response.ok && response.status === 400) {
       const firstError = await response.text();
       if (firstError.includes('INVALID_ARGUMENT')) {
         console.warn('[Gemini] URL-grounded request rejected; retrying text-only');
-        response = await fetch(geminiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(buildRequestBody(textOnlyParts, false))
-        });
+        const retryPayload = JSON.stringify(buildRequestBody(textOnlyParts, false));
+        const geminiRetryStart = Date.now();
+        response = await fetchGemini(retryPayload, geminiTimeoutMs);
+        console.log('[Gemini] Retry time to first response (ms):', Date.now() - geminiRetryStart);
       } else {
         console.error('[Gemini] Error response:', firstError);
         throw new Error(`Gemini API error: 400 - ${firstError}`);
@@ -542,7 +630,9 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       throw new Error(`Gemini API error: ${response.status} - ${errorData}`);
     }
 
+    const jsonStart = Date.now();
     const data = await response.json();
+    console.log('[Gemini] Time to parse JSON (ms):', Date.now() - jsonStart);
     const result = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response';
     
     console.log('[Gemini] Raw response starts with:', result.substring(0, 50));
@@ -597,6 +687,11 @@ app.post('/api/call-gemini', verifyToken, async (req, res) => {
       });
     }
   } catch (error) {
+    if (error?.name === 'AbortError' || /aborted/i.test(error?.message || '')) {
+      console.error('Gemini API timeout:', error.message);
+      res.status(504).json({ error: 'Gemini request timed out. Please retry.' });
+      return;
+    }
     console.error('Gemini API error:', error);
     res.status(500).json({ error: error.message });
   }
@@ -679,24 +774,34 @@ app.post('/api/call-tts', verifyToken, async (req, res) => {
       normalizedSpeed = Math.max(0.25, Math.min(4.0, normalizedSpeed));
     }
     
-    const response = await fetch('https://api.openai.com/v1/audio/speech', {
+    const ttsPayload = JSON.stringify({
+      model: 'tts-1',
+      input: text,
+      voice: voice || 'nova',
+      speed: normalizedSpeed
+    });
+
+    const ttsStart = Date.now();
+    const response = await fetchWithTimeout('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        model: 'tts-1',
-        input: text,
-        voice: voice || 'nova',
-        speed: normalizedSpeed
-      })
+      body: ttsPayload
     });
+    console.log('[TTS] Time to first response (ms):', Date.now() - ttsStart);
 
     if (!response.ok) throw new Error(`TTS API error: ${response.status}`);
 
+    const bufferStart = Date.now();
     const audioBuffer = await response.arrayBuffer();
+    console.log('[TTS] Time to download audio buffer (ms):', Date.now() - bufferStart);
+
+    const base64Start = Date.now();
     const base64Audio = Buffer.from(audioBuffer).toString('base64');
+    console.log('[TTS] Time to encode base64 (ms):', Date.now() - base64Start);
+
     const audioUrl = `data:audio/mpeg;base64,${base64Audio}`;
 
     res.json({ success: true, audioUrl });
